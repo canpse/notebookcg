@@ -10,7 +10,10 @@ const papel = opaco | 0xf4f1ea;
 const mesa = opaco | 0x3a3a3c;
 const tinta = opaco | 0x1d1d1f;
 const cor_selecao = opaco | 0x2f7df6;
+const cor_barra = opaco | 0x1c1c1e;
+const cor_texto_barra = opaco | 0xe8e6e1;
 const raio_pincel = 2;
+const fonte = @import("fonte.zig");
 
 const passo_giro = std.math.pi / 12.0; // 15°
 const passo_zoom = 1.1;
@@ -50,6 +53,21 @@ const PontoInt = struct { x: i32, y: i32 };
 
 fn paraInt(v: f32) i32 {
     return @intFromFloat(@floor(std.math.clamp(v, -1e6, 1e6)));
+}
+
+const altura_barra = fonte.altura + 8;
+
+/// Faixa no rodapé com o modo e a camada selecionada.
+fn barraDeEstado(tela: *Tela, modo: Modo, doc: *const Documento) void {
+    const topo = @as(i32, tela.altura) - altura_barra;
+    tela.retangulo(.{ .x0 = 0, .y0 = topo, .x1 = tela.largura, .y1 = tela.altura }, cor_barra);
+    var buf: [128]u8 = undefined;
+    const nome_modo = switch (modo) {
+        .pincel => "Pincel (b)",
+        .mover => "Mover (v)",
+    };
+    const texto = std.fmt.bufPrint(&buf, "{s}   ·   camada {d} de {d}", .{ nome_modo, doc.selecionada + 1, doc.camadas.items.len }) catch return;
+    _ = fonte.escrever(tela, 10, topo + 4, texto, cor_texto_barra, 1);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -184,16 +202,13 @@ pub fn main(init: std.process.Init) !void {
                 },
             }
         }
-        if (mudou) {
+        if (mudou or contar) {
             tela.limpar(mesa);
             doc.desenhar(&tela, vista);
             if (modo == .mover) doc.contorno(&tela, vista, cor_selecao);
+            barraDeEstado(&tela, modo, &doc);
             try janela.mostrar(tela.pixels, tela.largura, tela.altura);
             mudou = false;
-        }
-        if (contar) {
-            // Sem texto na tela ainda: o estado sai no terminal.
-            std.debug.print("modo {s} · camada {d} de {d}\n", .{ @tagName(modo), doc.selecionada + 1, doc.camadas.items.len });
             contar = false;
         }
     }
@@ -204,4 +219,5 @@ test {
     _ = @import("tela.zig");
     _ = @import("mat3.zig");
     _ = @import("camada.zig");
+    _ = @import("fonte.zig");
 }

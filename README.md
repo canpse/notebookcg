@@ -29,7 +29,7 @@ própria matriz. Mover, girar e escalar mudam só a matriz.
 - rodinha: zoom da vista em torno do cursor; botão direito arrastando: move a vista; `Shift+q/e`: gira a vista; `0`: vista normal
 - `Esc`: sai
 
-O terminal mostra o modo e qual camada está selecionada.
+A barra no rodapé mostra o modo e qual camada está selecionada.
 
 O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 `-Doptimize=Debug` se precisar depurar.
@@ -41,4 +41,6 @@ O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 - `src/mat3.zig`: matriz 3×3 em coordenadas homogêneas (translação, escala, rotação, composição em torno de um ponto, inversa)
 - `src/tela.zig`: também a amostragem bilinear com alfa pré-multiplicado e a composição "por cima" por mapeamento inverso
 - `src/camada.zig`: camadas e documento: seleção por clique (inversa de vista·camada), transformar em coordenadas da janela (`vista⁻¹·g·vista·camada`), pintar de baixo pra cima (algoritmo do pintor) e contorno
-- `src/main.zig`: o laço principal (teclas, mouse, modos)
+- `src/fonte.zig`: texto com fonte bitmap 8×16 (carimba a grade de bits de cada letra; lê UTF-8)
+- `src/fonte_dados.zig`: os glifos (ASCII + Latin-1), gerados por `ferramentas/fonte_psf.py` a partir da fonte de console `eurlatgr` do pacote kbd do Linux (GPL)
+- `src/main.zig`: o laço principal (teclas, mouse, modos, barra de estado)

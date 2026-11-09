@@ -67,6 +67,16 @@ pub const Tela = struct {
         t.pixels[@as(usize, @intCast(y)) * t.largura + @as(usize, @intCast(x))] = cor;
     }
 
+    /// Retângulo cheio (só a parte que cabe na tela).
+    pub fn retangulo(t: *Tela, caixa: Caixa, cor: Cor) void {
+        const c = caixa.recortar(t.largura, t.altura) orelse return;
+        var y = c.y0;
+        while (y < c.y1) : (y += 1) {
+            const inicio = @as(usize, @intCast(y)) * t.largura;
+            @memset(t.pixels[inicio + @as(usize, @intCast(c.x0)) .. inicio + @as(usize, @intCast(c.x1))], cor);
+        }
+    }
+
     /// Círculo cheio: todo pixel a até `raio` do centro.
     pub fn disco(t: *Tela, cx: i32, cy: i32, raio: i32, cor: Cor) void {
         var dy: i32 = -raio;
