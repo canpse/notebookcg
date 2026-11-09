@@ -1,9 +1,32 @@
 //! A tela é só um vetor de pixels na memória. Tudo que o editor desenha
 //! acaba aqui, um pixel de cada vez; a janela só copia isto pro monitor.
 const std = @import("std");
+const Mat3 = @import("mat3.zig").Mat3;
 
-/// 0x00RRGGBB
+/// 0xAARRGGBB. A é a opacidade: 0 transparente, 255 opaco. A janela ignora
+/// o A; nas camadas ele é o que deixa ver o que está embaixo.
 pub const Cor = u32;
+
+pub const opaco: Cor = 0xff000000;
+
+/// Retângulo de pixels; x1 e y1 ficam de fora.
+pub const Caixa = struct {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+
+    pub fn unir(a: ?Caixa, b: Caixa) Caixa {
+        const c = a orelse return b;
+        return .{ .x0 = @min(c.x0, b.x0), .y0 = @min(c.y0, b.y0), .x1 = @max(c.x1, b.x1), .y1 = @max(c.y1, b.y1) };
+    }
+
+    /// Parte da caixa que cabe em (0,0)–(largura,altura); null se nada.
+    pub fn recortar(c: Caixa, largura: i32, altura: i32) ?Caixa {
+        const r: Caixa = .{ .x0 = @max(c.x0, 0), .y0 = @max(c.y0, 0), .x1 = @min(c.x1, largura), .y1 = @min(c.y1, altura) };
+        return if (r.x0 < r.x1 and r.y0 < r.y1) r else null;
+    }
+};
 
 pub const Tela = struct {
     gpa: std.mem.Allocator,
@@ -82,7 +105,7 @@ pub const Tela = struct {
     }
 
     /// Pixel (x, y), grudando na borda se cair fora.
-    fn pegar(t: *const Tela, x: i32, y: i32) Cor {
+    pub fn pegar(t: *const Tela, x: i32, y: i32) Cor {
         const cx: usize = @intCast(std.math.clamp(x, 0, @as(i32, t.largura) - 1));
         const cy: usize = @intCast(std.math.clamp(y, 0, @as(i32, t.altura) - 1));
         return t.pixels[cy * t.largura + cx];
@@ -91,7 +114,11 @@ pub const Tela = struct {
     /// Cor na posição (u, v) em unidades de pixel, que quase sempre cai entre
     /// pixels: mistura os 4 vizinhos pelo quanto (u, v) está perto de cada um
     /// (interpolação bilinear). Fora da imagem devolve null.
-    pub fn amostrar(t: *const Tela, u: f32, v: f32) ?Cor {
+    ///
+    /// Devolve {A, R, G, B} de 0 a 255 com a cor já PRÉ-MULTIPLICADA pela
+    /// opacidade. Misturar sem isso faria a borda de um traço puxar a cor dos
+    /// pixels transparentes vizinhos (que não têm cor nenhuma) e escurecer.
+    pub fn amostrar(t: *const Tela, u: f32, v: f32) ?[4]f32 {
         const lw: f32 = @floatFromInt(t.largura);
         const lh: f32 = @floatFromInt(t.altura);
         if (!(u >= -0.5 and v >= -0.5 and u < lw - 0.5 and v < lh - 0.5)) return null;
@@ -101,70 +128,50 @@ pub const Tela = struct {
         const fy = v - base_v;
         const x: i32 = @intFromFloat(base_u);
         const y: i32 = @intFromFloat(base_v);
-        const a = t.pegar(x, y);
-        const b = t.pegar(x + 1, y);
-        const c = t.pegar(x, y + 1);
-        const d = t.pegar(x + 1, y + 1);
-        var cor: Cor = 0;
-        inline for (.{ 16, 8, 0 }) |s| {
-            const ca: f32 = @floatFromInt((a >> s) & 0xff);
-            const cb: f32 = @floatFromInt((b >> s) & 0xff);
-            const cc: f32 = @floatFromInt((c >> s) & 0xff);
-            const cd: f32 = @floatFromInt((d >> s) & 0xff);
-            const em_cima = ca + (cb - ca) * fx;
-            const em_baixo = cc + (cd - cc) * fx;
-            const canal = em_cima + (em_baixo - em_cima) * fy;
-            cor |= @as(Cor, @intFromFloat(@round(canal))) << s;
+        const vizinhos = [4]Cor{ t.pegar(x, y), t.pegar(x + 1, y), t.pegar(x, y + 1), t.pegar(x + 1, y + 1) };
+        const pesos = [4]f32{ (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
+        var r = [4]f32{ 0, 0, 0, 0 };
+        for (vizinhos, pesos) |c, p| {
+            const a: f32 = @floatFromInt(c >> 24);
+            r[0] += a * p;
+            inline for (.{ 16, 8, 0 }, 1..) |s, i| {
+                const canal: f32 = @floatFromInt((c >> s) & 0xff);
+                r[i] += canal * (a / 255) * p;
+            }
         }
-        return cor;
+        return r;
     }
 
-    /// Pinta `origem` nesta tela transformada por uma matriz, recebendo a
-    /// INVERSA dela. Mapeamento inverso: pra cada pixel daqui pergunta "de
-    /// onde você veio lá?". No sentido direto (levar cada pixel de lá pra cá)
-    /// sobram buracos quando a imagem gira ou aumenta.
-    pub fn desenharTransformada(t: *Tela, origem: *const Tela, inversa: Mat3, fundo: Cor) void {
-        for (0..t.altura) |y| {
+    /// Pinta `origem` POR CIMA desta tela, transformada por uma matriz da qual
+    /// se recebe a INVERSA, só dentro de `caixa`. Mapeamento inverso: pra cada
+    /// pixel daqui pergunta "de onde você veio lá?". No sentido direto (levar
+    /// cada pixel de lá pra cá) sobram buracos quando a imagem gira ou aumenta.
+    /// "Por cima": cor final = origem + destino × (1 − opacidade da origem).
+    pub fn comporTransformada(t: *Tela, origem: *const Tela, inversa: Mat3, caixa: Caixa) void {
+        const c = caixa.recortar(t.largura, t.altura) orelse return;
+        var y = c.y0;
+        while (y < c.y1) : (y += 1) {
             const fy: f32 = @floatFromInt(y);
-            for (0..t.largura) |x| {
+            var x = c.x0;
+            while (x < c.x1) : (x += 1) {
                 const fx: f32 = @floatFromInt(x);
                 // +0.5: o centro do pixel; -0.5 volta pra índice do outro lado.
                 const p = inversa.aplicar(fx + 0.5, fy + 0.5);
-                t.pixels[y * t.largura + x] = origem.amostrar(p.x - 0.5, p.y - 0.5) orelse fundo;
+                const s = origem.amostrar(p.x - 0.5, p.y - 0.5) orelse continue;
+                if (s[0] < 0.5) continue;
+                const i = @as(usize, @intCast(y)) * t.largura + @as(usize, @intCast(x));
+                const resto = 1 - s[0] / 255;
+                var cor: Cor = opaco;
+                inline for (.{ 16, 8, 0 }, 1..) |sh, k| {
+                    const embaixo: f32 = @floatFromInt((t.pixels[i] >> sh) & 0xff);
+                    const canal = @min(255, s[k] + embaixo * resto);
+                    cor |= @as(Cor, @intFromFloat(@round(canal))) << sh;
+                }
+                t.pixels[i] = cor;
             }
         }
     }
 };
-
-const Mat3 = @import("mat3.zig").Mat3;
-
-test "transformação identidade copia a imagem igualzinha" {
-    var origem = try Tela.criar(std.testing.allocator, 5, 4, 0);
-    defer origem.destruir();
-    for (origem.pixels, 0..) |*p, i| p.* = @intCast(i * 0x030201);
-    var destino = try Tela.criar(std.testing.allocator, 5, 4, 0);
-    defer destino.destruir();
-    destino.desenharTransformada(&origem, Mat3.identidade, 0xabcdef);
-    try std.testing.expectEqualSlices(Cor, origem.pixels, destino.pixels);
-}
-
-test "bilinear no meio de dois pixels dá a média" {
-    var t = try Tela.criar(std.testing.allocator, 2, 1, 0);
-    defer t.destruir();
-    t.pixels[0] = 0x000000;
-    t.pixels[1] = 0xc86420;
-    try std.testing.expectEqual(@as(?Cor, 0x643210), t.amostrar(0.5, 0));
-    try std.testing.expectEqual(@as(?Cor, null), t.amostrar(5, 0));
-}
-
-test "dobrar o tamanho cobre a tela toda sem buracos" {
-    var origem = try Tela.criar(std.testing.allocator, 4, 4, 0x111111);
-    defer origem.destruir();
-    var destino = try Tela.criar(std.testing.allocator, 8, 8, 0);
-    defer destino.destruir();
-    destino.desenharTransformada(&origem, Mat3.escala(2, 2).inversa().?, 0xff0000);
-    for (destino.pixels) |p| try std.testing.expectEqual(@as(Cor, 0x111111), p);
-}
 
 test "linha pinta as duas pontas e nada longe dela" {
     var t = try Tela.criar(std.testing.allocator, 20, 10, 0);
@@ -196,4 +203,45 @@ test "redimensionar mantém o desenho" {
     try std.testing.expectEqual(@as(Cor, 9), t.pixels[5 * 10 + 9]);
     try t.redimensionar(2, 2, 9);
     try std.testing.expectEqual(@as(usize, 4), t.pixels.len);
+}
+
+const caixa_toda: Caixa = .{ .x0 = 0, .y0 = 0, .x1 = 1000, .y1 = 1000 };
+
+test "compor uma imagem opaca sem transformar copia igualzinho" {
+    var origem = try Tela.criar(std.testing.allocator, 5, 4, 0);
+    defer origem.destruir();
+    for (origem.pixels, 0..) |*p, i| p.* = opaco | @as(Cor, @intCast(i * 0x030201));
+    var destino = try Tela.criar(std.testing.allocator, 5, 4, opaco);
+    defer destino.destruir();
+    destino.comporTransformada(&origem, Mat3.identidade, caixa_toda);
+    try std.testing.expectEqualSlices(Cor, origem.pixels, destino.pixels);
+}
+
+test "o transparente deixa ver o que está embaixo" {
+    var origem = try Tela.criar(std.testing.allocator, 2, 1, 0);
+    defer origem.destruir();
+    origem.pixels[1] = opaco | 0x102030;
+    var destino = try Tela.criar(std.testing.allocator, 2, 1, opaco | 0xffffff);
+    defer destino.destruir();
+    destino.comporTransformada(&origem, Mat3.identidade, caixa_toda);
+    try std.testing.expectEqual(opaco | 0xffffff, destino.pixels[0]);
+    try std.testing.expectEqual(opaco | 0x102030, destino.pixels[1]);
+}
+
+test "bilinear entre preto opaco e transparente sobre branco dá cinza, não preto" {
+    var t = try Tela.criar(std.testing.allocator, 2, 1, 0);
+    defer t.destruir();
+    t.pixels[0] = opaco;
+    const s = t.amostrar(0.5, 0).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 127.5), s[0], 0.01);
+    try std.testing.expectEqual(@as(?[4]f32, null), t.amostrar(5, 0));
+}
+
+test "dobrar o tamanho cobre a área toda sem buracos" {
+    var origem = try Tela.criar(std.testing.allocator, 4, 4, opaco | 0x111111);
+    defer origem.destruir();
+    var destino = try Tela.criar(std.testing.allocator, 8, 8, opaco);
+    defer destino.destruir();
+    destino.comporTransformada(&origem, Mat3.escala(2, 2).inversa().?, caixa_toda);
+    for (destino.pixels) |p| try std.testing.expectEqual(opaco | 0x111111, p);
 }

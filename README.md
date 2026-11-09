@@ -13,13 +13,23 @@ Precisa de Zig 0.16 e de um servidor X (no Wayland, o XWayland serve).
 
 ## Como usar
 
-- arrastar com o botão esquerdo: desenha
-- arrastar com o botão direito: move a folha
-- rodinha: zoom em torno do cursor
-- `q` / `e`: gira 15° pra um lado ou pro outro (em torno do centro da janela)
-- `0`: volta a vista ao normal
-- `c`: limpa
+Cada camada é um objeto: tem os próprios pixels (com transparência) e a
+própria matriz. Mover, girar e escalar mudam só a matriz.
+
+- `b`: modo pincel (arrastar com o esquerdo desenha na camada selecionada)
+- `v`: modo mover (clicar seleciona a camada de cima que tem tinta ali; arrastar move; contorno azul na selecionada)
+- `q` / `e`: gira a camada selecionada 15° em torno do centro dela
+- `-` / `=`: diminui / aumenta a camada selecionada
+- `r`: desfaz as transformações da camada
+- `n`: camada nova acima da selecionada
+- `Tab` / `Shift+Tab`: seleciona a próxima / anterior
+- `Page Up` / `Page Down`: sobe / desce a camada na pilha
+- `Delete`: apaga a camada
+- `c`: limpa a camada
+- rodinha: zoom da vista em torno do cursor; botão direito arrastando: move a vista; `Shift+q/e`: gira a vista; `0`: vista normal
 - `Esc`: sai
+
+O terminal mostra o modo e qual camada está selecionada.
 
 O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 `-Doptimize=Debug` se precisar depurar.
@@ -29,5 +39,6 @@ O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 - `src/x11.zig`: a janela (conexão, eventos, envio dos pixels)
 - `src/tela.zig`: o vetor de pixels e os desenhos básicos (ponto, disco, linha de Bresenham)
 - `src/mat3.zig`: matriz 3×3 em coordenadas homogêneas (translação, escala, rotação, composição em torno de um ponto, inversa)
-- `src/tela.zig`: também a amostragem bilinear e o desenho transformado por mapeamento inverso
-- `src/main.zig`: o laço principal. O desenho mora numa folha; a janela mostra a folha pela matriz `vista`, e o mouse volta pela inversa
+- `src/tela.zig`: também a amostragem bilinear com alfa pré-multiplicado e a composição "por cima" por mapeamento inverso
+- `src/camada.zig`: camadas e documento: seleção por clique (inversa de vista·camada), transformar em coordenadas da janela (`vista⁻¹·g·vista·camada`), pintar de baixo pra cima (algoritmo do pintor) e contorno
+- `src/main.zig`: o laço principal (teclas, mouse, modos)
