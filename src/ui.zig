@@ -27,6 +27,12 @@ pub const Estado = struct {
     cor: Cor,
     /// Digitando no texto selecionado.
     editando: bool = false,
+    /// Escolhendo imagem: a lista de arquivos aparece por cima de tudo.
+    arquivos: ?[]const []u8 = null,
+    pasta: []const u8 = "",
+    rolagem: usize = 0,
+    /// Recado no rodapé (ex.: a imagem não abriu).
+    aviso: ?[]const u8 = null,
 };
 
 pub const Acao = union(enum) {
@@ -38,6 +44,8 @@ pub const Acao = union(enum) {
     apagar,
     cor: Cor,
     editar_texto,
+    abrir: usize,
+    cancelar_abrir,
 };
 
 pub const paleta = [_]Cor{
@@ -81,6 +89,10 @@ pub const Layout = struct {
     barra: Caixa,
     painel: Caixa,
     rodape: Caixa,
+    /// Janela da lista de arquivos, quando aberta: enquanto isso, só ela responde.
+    modal: ?Caixa = null,
+    /// Quantas linhas de arquivo cabem (pra rolagem).
+    linhas_visiveis: usize = 0,
 
     fn por(l: *Layout, b: Botao) void {
         if (l.n == l.botoes.len) return;
@@ -96,6 +108,7 @@ pub const Layout = struct {
 
     /// O ponto cai em cima da interface (e não da folha)?
     pub fn dentro(l: *const Layout, x: i32, y: i32) bool {
+        if (l.modal != null) return true;
         return l.barra.contem(x, y) or l.painel.contem(x, y) or l.rodape.contem(x, y);
     }
 
@@ -131,7 +144,7 @@ pub fn montar(largura: u16, altura: u16, doc: *Documento, estado: Estado) Layout
     var x: i32 = 6;
     for (tipos_na_barra, rotulos_na_barra) |t, r| {
         const bw = fonte.medir(r, 1) + 16;
-        l.por(.{ .caixa = .{ .x0 = x, .y0 = 3, .x1 = x + bw, .y1 = altura_barra - 3 }, .acao = .{ .adicionar = t }, .rotulo = r, .desligado = t == .imagem });
+        l.por(.{ .caixa = .{ .x0 = x, .y0 = 3, .x1 = x + bw, .y1 = altura_barra - 3 }, .acao = .{ .adicionar = t }, .rotulo = r });
         x += bw + 4;
     }
     // Modos, encostados na direita.
@@ -186,7 +199,34 @@ pub fn montar(largura: u16, altura: u16, doc: *Documento, estado: Estado) Layout
         l.por(.{ .caixa = .{ .x0 = esq, .y0 = yl, .x1 = dir, .y1 = yl + altura_linha }, .acao = .{ .selecionar = i }, .rotulo = doc.camadas.items[i].nome(), .ligado = i == doc.selecionada });
         yl += altura_linha + 2;
     }
+
+    if (estado.arquivos) |nomes| montarEscolha(&l, w, h, nomes, estado.rolagem);
     return l;
+}
+
+/// Janela por cima de tudo com os arquivos de imagem; o resto fica apagado.
+fn montarEscolha(l: *Layout, w: i32, h: i32, nomes: []const []u8, rolagem: usize) void {
+    for (l.botoes[0..l.n]) |*b| {
+        b.desligado = true;
+        b.ligado = false;
+    }
+    const largura = @min(w - 40, 560);
+    const altura = @min(h - 80, 520);
+    const x0 = @divTrunc(w - largura, 2);
+    const y0 = @divTrunc(h - altura, 2);
+    const caixa: Caixa = .{ .x0 = x0, .y0 = y0, .x1 = x0 + largura, .y1 = y0 + altura };
+    l.modal = caixa;
+    const topo_lista = y0 + altura_linha + 16;
+    const base_lista = caixa.y1 - altura_linha - 16;
+    l.linhas_visiveis = @intCast(@max(1, @divTrunc(base_lista - topo_lista, altura_linha + 2)));
+    var y = topo_lista;
+    var i = rolagem;
+    while (i < nomes.len and y + altura_linha <= base_lista) : (i += 1) {
+        l.por(.{ .caixa = .{ .x0 = x0 + 8, .y0 = y, .x1 = caixa.x1 - 8, .y1 = y + altura_linha }, .acao = .{ .abrir = i }, .rotulo = nomes[i] });
+        y += altura_linha + 2;
+    }
+    const bw = fonte.medir("Cancelar", 1) + 24;
+    l.por(.{ .caixa = .{ .x0 = caixa.x1 - 8 - bw, .y0 = caixa.y1 - altura_linha - 8, .x1 = caixa.x1 - 8, .y1 = caixa.y1 - 8 }, .acao = .cancelar_abrir, .rotulo = "Cancelar" });
 }
 
 fn centralizado(t: *Tela, c: Caixa, texto: []const u8, cor_texto: Cor) void {
@@ -210,7 +250,16 @@ pub fn desenhar(t: *Tela, l: *const Layout, sobre: ?usize, doc: *Documento, esta
     t.retangulo(l.rodape, cor.fundo);
     for (l.titulos[0..l.n_titulos]) |ti| _ = fonte.escrever(t, ti.x, ti.y, ti.texto, cor.titulo, 1);
 
+    var modal_desenhado = false;
     for (l.botoes[0..l.n], 0..) |b, i| {
+        // A janela da lista vem depois dos botões apagados: pinta ela antes
+        // do primeiro botão dela.
+        if (l.modal) |m| {
+            if (!modal_desenhado and !b.desligado) {
+                desenharFundoEscolha(t, m, estado);
+                modal_desenhado = true;
+            }
+        }
         const em_cima = sobre == i and !b.desligado;
         const cor_texto = if (b.desligado) cor.apagado else cor.texto;
         switch (b.acao) {
@@ -230,6 +279,20 @@ pub fn desenhar(t: *Tela, l: *const Layout, sobre: ?usize, doc: *Documento, esta
                 // Cursor piscando seria mais um timer; um traço fixo basta.
                 if (b.ligado) t.retangulo(.{ .x0 = fim + 1, .y0 = b.caixa.y0 + 4, .x1 = fim + 3, .y1 = b.caixa.y1 - 4 }, cor.ligado);
             },
+            .abrir => {
+                if (em_cima) t.retangulo(b.caixa, cor.ligado);
+                // Caminho comprido: mostra o fim, que é o que distingue.
+                const cabe: usize = @intCast(@max(4, @divTrunc(b.caixa.x1 - b.caixa.x0 - 16, fonte.largura)));
+                var x = b.caixa.x0 + 8;
+                var nome = b.rotulo;
+                if (nome.len > cabe) {
+                    x = fonte.escrever(t, x, b.caixa.y0 + 4, "...", cor.titulo, 1);
+                    nome = nome[nome.len - (cabe - 3) ..];
+                    // Não começar no meio de uma letra de 2 bytes.
+                    while (nome.len > 0 and nome[0] & 0xc0 == 0x80) nome = nome[1..];
+                }
+                _ = fonte.escrever(t, x, b.caixa.y0 + 4, nome, cor.texto, 1);
+            },
             // Linhas de camada: nome alinhado à esquerda.
             .selecionar => {
                 if (b.ligado) t.retangulo(b.caixa, cor.ligado) else if (em_cima) t.retangulo(b.caixa, cor.sobre);
@@ -242,9 +305,15 @@ pub fn desenhar(t: *Tela, l: *const Layout, sobre: ?usize, doc: *Documento, esta
         }
     }
 
-    // Rodapé: o que dá pra fazer agora.
+    // Rodapé: o que dá pra fazer agora (ou o recado, se tiver).
     var buf: [200]u8 = undefined;
-    const dica = if (estado.editando)
+    if (estado.aviso) |a| {
+        _ = fonte.escrever(t, 10, l.rodape.y0 + 4, a, opaco | 0xfacc15, 1);
+        return;
+    }
+    const dica = if (estado.arquivos != null)
+        "escolha a imagem (rodinha rola a lista) · Esc cancela"
+    else if (estado.editando)
         "digitando: Enter ou Esc termina · Backspace apaga"
     else switch (estado.modo) {
         .pincel => "arraste pra desenhar (se não for desenho, cria um)",
@@ -254,16 +323,31 @@ pub fn desenhar(t: *Tela, l: *const Layout, sobre: ?usize, doc: *Documento, esta
     _ = fonte.escrever(t, 10, l.rodape.y0 + 4, texto, cor.texto, 1);
 }
 
+fn desenharFundoEscolha(t: *Tela, m: Caixa, estado: Estado) void {
+    t.retangulo(.{ .x0 = m.x0 + 6, .y0 = m.y0 + 6, .x1 = m.x1 + 6, .y1 = m.y1 + 6 }, opaco | 0x111112);
+    t.retangulo(m, cor.fundo);
+    moldura(t, m, 1, cor.borda);
+    var buf: [160]u8 = undefined;
+    const n = if (estado.arquivos) |a| a.len else 0;
+    // Pasta comprida: só o fim dela cabe no título.
+    const cabe: usize = @intCast(@max(8, @divTrunc(m.x1 - m.x0 - 24, fonte.largura) - 24));
+    const pasta = if (estado.pasta.len > cabe) estado.pasta[estado.pasta.len - cabe ..] else estado.pasta;
+    const reticencias = if (estado.pasta.len > cabe) "..." else "";
+    const titulo = std.fmt.bufPrint(&buf, "Abrir imagem  ·  {d} em {s}{s}", .{ n, reticencias, pasta }) catch "Abrir imagem";
+    _ = fonte.escrever(t, m.x0 + 12, m.y0 + 10, titulo, cor.texto, 1);
+    if (n == 0) _ = fonte.escrever(t, m.x0 + 12, m.y0 + 50, "nenhum .ppm ou .pgm aqui (zig build run -- <pasta>)", cor.titulo, 1);
+}
+
 const testing = std.testing;
 
-test "clicar num botão da barra dá a ação dele; o de imagem ainda não responde" {
+test "clicar num botão da barra dá a ação dele" {
     var d = try Documento.criar(testing.allocator, 100, 100, opaco);
     defer d.destruir();
     const l = montar(900, 600, &d, .{ .modo = .pincel, .cor = paleta[0] });
     const ret = l.botoes[1].caixa;
     try testing.expectEqual(Acao{ .adicionar = .retangulo }, l.clicar(ret.x0 + 2, ret.y0 + 2).?);
     const img = l.botoes[4].caixa;
-    try testing.expectEqual(@as(?Acao, null), l.clicar(img.x0 + 2, img.y0 + 2));
+    try testing.expectEqual(Acao{ .adicionar = .imagem }, l.clicar(img.x0 + 2, img.y0 + 2).?);
     try testing.expect(l.dentro(5, 5));
     try testing.expect(!l.dentro(300, 300));
 }
@@ -303,4 +387,18 @@ test "paleta sempre; campo de texto só quando a selecionada é texto" {
     try d.adicionar(.texto, .{ .x = 50, .y = 50 });
     l = montar(900, 600, &d, e);
     try testing.expectEqual(@as(usize, 1), contar(&l, .editar_texto));
+}
+
+test "com a lista de arquivos aberta, só ela responde" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    var a = "a.ppm".*;
+    var b = "b.ppm".*;
+    const nomes = [_][]u8{ &a, &b };
+    const l = montar(900, 600, &d, .{ .modo = .mover, .cor = paleta[0], .arquivos = &nomes });
+    const ret = l.botoes[1].caixa;
+    try testing.expectEqual(@as(?Acao, null), l.clicar(ret.x0 + 2, ret.y0 + 2));
+    try testing.expect(l.dentro(300, 300));
+    try testing.expectEqual(@as(usize, 2), contar(&l, .abrir));
+    try testing.expectEqual(@as(usize, 1), contar(&l, .cancelar_abrir));
 }

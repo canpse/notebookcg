@@ -11,6 +11,8 @@ const ui = @import("ui.zig");
 const Modo = ui.Modo;
 const Digitacao = @import("digitar.zig").Digitacao;
 const alcas = @import("alcas.zig");
+const arquivos = @import("arquivos.zig");
+const ppm = @import("ppm.zig");
 
 const papel = opaco | 0xf4f1ea;
 const mesa = opaco | 0x3a3a3c;
@@ -55,6 +57,18 @@ const botao = struct {
 
 const PontoInt = struct { x: i32, y: i32 };
 
+fn estadoUi(modo: Modo, cor: tela_.Cor, editando: bool, lista: *const ?arquivos.Lista, pasta: []const u8, rolagem: usize, aviso: ?[]const u8) ui.Estado {
+    return .{
+        .modo = modo,
+        .cor = cor,
+        .editando = editando,
+        .arquivos = if (lista.*) |l| l.nomes.items else null,
+        .pasta = pasta,
+        .rolagem = rolagem,
+        .aviso = aviso,
+    };
+}
+
 fn paraInt(v: f32) i32 {
     return @intFromFloat(@floor(std.math.clamp(v, -1e6, 1e6)));
 }
@@ -81,7 +95,22 @@ fn naCamada(doc: *Documento, vista: Mat3, x: i32, y: i32) ?PontoInt {
     return .{ .x = paraInt(p.x), .y = paraInt(p.y) };
 }
 
+/// Abre o arquivo escolhido na lista e põe como objeto novo.
+fn abrirImagem(init: std.process.Init, doc: *Documento, pasta: []const u8, relativo: []const u8, centro: Ponto) !void {
+    const caminho = try std.fs.path.join(init.gpa, &.{ pasta, relativo });
+    defer init.gpa.free(caminho);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, caminho, init.gpa, .limited(256 * 1024 * 1024));
+    defer init.gpa.free(bytes);
+    var img = try ppm.ler(init.gpa, bytes);
+    errdefer img.destruir();
+    try doc.adicionarImagem(img, std.fs.path.basename(relativo), centro);
+}
+
 pub fn main(init: std.process.Init) !void {
+    // A pasta onde procurar imagens: o primeiro argumento ou a atual.
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const pasta: []const u8 = if (args.len > 1) args[1] else ".";
+
     var janela = try x11.Janela.abrir(init.gpa, init.environ_map, "editor", 1200, 760);
     defer janela.fechar();
 
@@ -109,13 +138,19 @@ pub fn main(init: std.process.Init) !void {
     var editando = false;
     var substituir = false;
     var digitacao: Digitacao = .{};
+    // Lista de imagens aberta (escolhendo arquivo) e quanto rolou.
+    var lista: ?arquivos.Lista = null;
+    defer if (lista) |*l| l.deinit();
+    var rolagem: usize = 0;
+    var aviso: ?[]const u8 = null;
+    var aviso_buf: [160]u8 = undefined;
     var mudou = true;
 
     laco: while (true) {
         // Dorme até chegar um evento, trata todos os que já chegaram e só então redesenha.
         var evento = try janela.proximo(true);
         while (evento) |e| : (evento = try janela.proximo(false)) {
-            const layout = ui.montar(tela.largura, tela.altura, &doc, .{ .modo = modo, .cor = cor_pincel, .editando = editando });
+            const layout = ui.montar(tela.largura, tela.altura, &doc, estadoUi(modo, cor_pincel, editando, &lista, pasta, rolagem, aviso));
             switch (e) {
                 .fechar => break :laco,
                 .expor => mudou = true,
@@ -129,6 +164,16 @@ pub fn main(init: std.process.Init) !void {
                         continue;
                     }
                     if (!t.apertou) continue;
+                    aviso = null;
+                    if (lista != null) {
+                        // Com a lista aberta, só o Esc faz algo (fecha).
+                        if (t.codigo == tecla.esc) {
+                            lista.?.deinit();
+                            lista = null;
+                            mudou = true;
+                        }
+                        continue;
+                    }
                     if (editando) {
                         // Digitando: toda tecla vai pro texto, nada de atalho.
                         if (doc.atual().modelo != .texto) {
@@ -200,7 +245,15 @@ pub fn main(init: std.process.Init) !void {
                 },
                 .botao => |b| {
                     // Clique em cima do menu é do menu, não da folha.
+                    if (b.apertou) aviso = null;
                     if (b.apertou and layout.dentro(b.x, b.y)) {
+                        // Rodinha rola a lista de arquivos.
+                        if (lista) |l| if (b.numero == botao.rodinha_cima or b.numero == botao.rodinha_baixo) {
+                            const max = l.nomes.items.len -| layout.linhas_visiveis;
+                            rolagem = if (b.numero == botao.rodinha_cima) rolagem -| 3 else @min(max, rolagem + 3);
+                            mudou = true;
+                            continue;
+                        };
                         if (b.numero != botao.esquerdo) continue;
                         const acao = layout.clicar(b.x, b.y) orelse continue;
                         // Clicar em qualquer coisa do menu termina a digitação,
@@ -208,6 +261,16 @@ pub fn main(init: std.process.Init) !void {
                         if (acao != .cor) editando = false;
                         switch (acao) {
                             .adicionar => |tipo| {
+                                if (tipo == .imagem) {
+                                    // Imagem vem de arquivo: abre a lista pra escolher.
+                                    lista = arquivos.listar(init.gpa, init.io, pasta) catch |err| blk: {
+                                        aviso = std.fmt.bufPrint(&aviso_buf, "não deu pra ler a pasta {s}: {s}", .{ pasta, @errorName(err) }) catch null;
+                                        break :blk null;
+                                    };
+                                    rolagem = 0;
+                                    mudou = true;
+                                    continue;
+                                }
                                 const inv = vista.inversa() orelse continue;
                                 const cj = centroDaArea(&tela);
                                 try doc.adicionar(tipo, inv.aplicar(cj.x, cj.y));
@@ -230,6 +293,21 @@ pub fn main(init: std.process.Init) !void {
                             .editar_texto => {
                                 editando = true;
                                 substituir = false;
+                            },
+                            .abrir => |i| {
+                                const inv = vista.inversa() orelse continue;
+                                const cj = centroDaArea(&tela);
+                                const nome = lista.?.nomes.items[i];
+                                abrirImagem(init, &doc, pasta, nome, inv.aplicar(cj.x, cj.y)) catch |err| {
+                                    aviso = std.fmt.bufPrint(&aviso_buf, "não abriu {s}: {s}", .{ nome, @errorName(err) }) catch null;
+                                };
+                                if (aviso == null) modo = .mover;
+                                lista.?.deinit();
+                                lista = null;
+                            },
+                            .cancelar_abrir => {
+                                lista.?.deinit();
+                                lista = null;
                             },
                         }
                         mudou = true;
@@ -323,7 +401,7 @@ pub fn main(init: std.process.Init) !void {
             tela.limpar(mesa);
             doc.desenhar(&tela, vista);
             if (modo == .mover) alcas.desenhar(&tela, doc.atual(), vista, sobre_alca);
-            const estado: ui.Estado = .{ .modo = modo, .cor = cor_pincel, .editando = editando };
+            const estado: ui.Estado = estadoUi(modo, cor_pincel, editando, &lista, pasta, rolagem, aviso);
             const layout = ui.montar(tela.largura, tela.altura, &doc, estado);
             ui.desenhar(&tela, &layout, sobre, &doc, estado);
             try janela.mostrar(tela.pixels, tela.largura, tela.altura);
@@ -341,4 +419,6 @@ test {
     _ = @import("ui.zig");
     _ = @import("digitar.zig");
     _ = @import("alcas.zig");
+    _ = @import("ppm.zig");
+    _ = @import("arquivos.zig");
 }

@@ -6,7 +6,8 @@ trabalho de Computação Gráfica (IFC, 2026.2).
 "Do zero" aqui quer dizer que o programa abre a própria janela falando o
 protocolo do X11 pelo socket e pinta cada pixel num vetor na memória.
 
-    zig build run     # abre o editor
+    zig build run                 # abre o editor
+    zig build run -- ~/fotos      # pasta onde o "+ Imagem" procura .ppm/.pgm
     zig build test    # roda os testes
 
 Precisa de Zig 0.16 e de um servidor X (no Wayland, o XWayland serve).
@@ -14,7 +15,9 @@ Precisa de Zig 0.16 e de um servidor X (no Wayland, o XWayland serve).
 ## Como usar
 
 Tudo que entra no documento começa escolhendo o **modelo** na barra de cima:
-Desenho, Retângulo, Elipse, Texto (Imagem ainda não). Cada camada é um objeto:
+Desenho, Retângulo, Elipse, Texto ou Imagem (PPM/PGM, P2/P3/P5/P6, escolhida
+numa lista dentro da janela com os arquivos da pasta e subpastas; imagem
+grande entra reduzida pela matriz, sem perder pixel). Cada camada é um objeto:
 o modelo (tipo + parâmetros) gera os pixels dela, e uma matriz própria diz
 onde ela fica na folha. Mover, girar e escalar mudam só a matriz.
 
@@ -41,6 +44,8 @@ O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 - `src/camada.zig`: modelos (desenho, retângulo, elipse, texto) e `gerar` (modelo → pixels); camadas e documento: seleção por clique (inversa de vista·camada), transformar em coordenadas da janela (`vista⁻¹·g·vista·camada`), pintar de baixo pra cima (algoritmo do pintor) e contorno
 - `src/fonte.zig`: texto com fonte bitmap 8×16 (carimba a grade de bits de cada letra; lê UTF-8)
 - `src/fonte_dados.zig`: os glifos (ASCII + Latin-1), gerados por `ferramentas/fonte_psf.py` a partir da fonte de console `eurlatgr` do pacote kbd do Linux (GPL)
+- `src/ppm.zig`: leitura de PPM/PGM em texto e binário
+- `src/arquivos.zig`: lista de imagens da pasta (pra escolher dentro da janela)
 - `src/digitar.zig`: de tecla a letra (keysym → Unicode, tecla morta + letra = letra acentuada)
 - `src/alcas.zig`: alças de transformação (escala na coordenada da camada: `matriz·T(âncora)·S·T(−âncora)`; giro na janela em torno do centro)
 - `src/ui.zig`: menus dentro da janela (barra, painel de camadas, rodapé); o mesmo layout desenha e responde ao clique

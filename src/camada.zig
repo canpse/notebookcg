@@ -259,7 +259,7 @@ pub const Documento = struct {
                 t.trocar("Texto");
                 break :blk .{ .pixels = try Tela.criar(d.gpa, 1, 1, 0), .modelo = .{ .texto = t } };
             },
-            .imagem => return error.AindaNaoTem,
+            .imagem => return error.ImagemVemDeArquivo,
         };
         errdefer c.pixels.destruir();
         try c.gerar();
@@ -270,6 +270,22 @@ pub const Documento = struct {
         }
         d.criados += 1;
         c.batizar("{s} {d}", .{ tipo.nome(), d.criados });
+        try d.camadas.append(d.gpa, c);
+        d.selecionada = d.camadas.items.len - 1;
+    }
+
+    /// Imagem (já lida) como objeto novo no topo, centrada em `centro`. Se for
+    /// maior que 60% da folha, entra reduzida pela matriz: os pixels ficam
+    /// todos lá, e aumentar de volta não perde nada.
+    pub fn adicionarImagem(d: *Documento, pixels: Tela, nome_arquivo: []const u8, centro: Ponto) !void {
+        var c: Camada = .{ .pixels = pixels, .modelo = .imagem };
+        c.conteudo = .{ .x0 = 0, .y0 = 0, .x1 = pixels.largura, .y1 = pixels.altura };
+        const l: f32 = @floatFromInt(pixels.largura);
+        const a: f32 = @floatFromInt(pixels.altura);
+        const s = @min(1, 0.6 * @min(@as(f32, @floatFromInt(d.largura)) / l, @as(f32, @floatFromInt(d.altura)) / a));
+        c.matriz = Mat3.translacao(centro.x, centro.y).vezes(Mat3.escala(s, s)).vezes(Mat3.translacao(-l / 2, -a / 2));
+        d.criados += 1;
+        c.batizar("{s}", .{nome_arquivo[0..@min(nome_arquivo.len, c.nome_buf.len)]});
         try d.camadas.append(d.gpa, c);
         d.selecionada = d.camadas.items.len - 1;
     }
@@ -418,7 +434,7 @@ test "modelos viram objetos do próprio tamanho, centrados onde pediu" {
     try d.adicionar(.texto, .{ .x = 0, .y = 0 });
     try testing.expectEqual(@as(u16, 5 * 8 * 3), d.atual().pixels.largura);
     try testing.expectEqualStrings("Texto 3", d.atual().nome());
-    try testing.expectError(error.AindaNaoTem, d.adicionar(.imagem, origem));
+    try testing.expectError(error.ImagemVemDeArquivo, d.adicionar(.imagem, origem));
 }
 
 test "objeto novo vai pro topo mesmo com o fundo selecionado" {
@@ -429,6 +445,18 @@ test "objeto novo vai pro topo mesmo com o fundo selecionado" {
     try d.adicionar(.elipse, origem);
     try testing.expectEqual(@as(usize, 2), d.selecionada);
     try testing.expect(d.atual().modelo == .elipse);
+}
+
+test "imagem grande entra reduzida e centrada" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    const img = try Tela.criar(testing.allocator, 200, 100, opaco | 0xff0000);
+    try d.adicionarImagem(img, "foto.ppm", .{ .x = 50, .y = 50 });
+    try testing.expectEqualStrings("foto.ppm", d.atual().nome());
+    // 60% de 100 / 200 = 0,3: a imagem ocupa 60 de largura, centrada.
+    const p = d.atual().matriz.aplicar(200, 100);
+    try testing.expectApproxEqAbs(@as(f32, 80), p.x, 1e-3);
+    try testing.expectApproxEqAbs(@as(f32, 65), p.y, 1e-3);
 }
 
 test "o fundo não sai do lugar" {
