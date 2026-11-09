@@ -46,6 +46,7 @@ pub const Acao = union(enum) {
     editar_texto,
     abrir: usize,
     cancelar_abrir,
+    salvar,
 };
 
 pub const paleta = [_]Cor{
@@ -155,6 +156,12 @@ pub fn montar(largura: u16, altura: u16, doc: *Documento, estado: Estado) Layout
         x -= bw;
         l.por(.{ .caixa = .{ .x0 = x, .y0 = 3, .x1 = x + bw, .y1 = altura_barra - 3 }, .acao = .{ .modo = m.m }, .rotulo = m.r, .ligado = estado.modo == m.m });
         x -= 4;
+    }
+    {
+        const r = "Salvar PPM";
+        const bw = fonte.medir(r, 1) + 16;
+        x -= bw + 16;
+        l.por(.{ .caixa = .{ .x0 = x, .y0 = 3, .x1 = x + bw, .y1 = altura_barra - 3 }, .acao = .salvar, .rotulo = r });
     }
 
     // Painel, de baixo pra cima: botões da pilha, propriedades da

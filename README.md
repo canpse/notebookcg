@@ -22,6 +22,7 @@ o modelo (tipo + parâmetros) gera os pixels dela, e uma matriz própria diz
 onde ela fica na folha. Mover, girar e escalar mudam só a matriz.
 
 - barra de cima: `+ Modelo` cria o objeto no meio da tela; `Pincel` / `Mover` trocam o modo
+- `Salvar PPM`: grava a folha inteira (sem menus, alças nem zoom da tela) em P3 na pasta das imagens, como `editor-1.ppm`, `editor-2.ppm`...
 - painel da direita: as camadas de cima pra baixo; clicar seleciona; `Subir`, `Descer`, `Apagar`
 - **cor**: a paleta no painel troca a cor do objeto selecionado (num desenho, a cor do pincel)
 - **texto**: um texto novo já nasce digitando (a primeira letra troca o "Texto" padrão); depois, clicar no campo TEXTO ou `Enter` volta a editar; `Enter`/`Esc` termina. Acentos pelo layout do sistema, com tecla morta (´ + a = á)
@@ -44,7 +45,7 @@ O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 - `src/camada.zig`: modelos (desenho, retângulo, elipse, texto) e `gerar` (modelo → pixels); camadas e documento: seleção por clique (inversa de vista·camada), transformar em coordenadas da janela (`vista⁻¹·g·vista·camada`), pintar de baixo pra cima (algoritmo do pintor) e contorno
 - `src/fonte.zig`: texto com fonte bitmap 8×16 (carimba a grade de bits de cada letra; lê UTF-8)
 - `src/fonte_dados.zig`: os glifos (ASCII + Latin-1), gerados por `ferramentas/fonte_psf.py` a partir da fonte de console `eurlatgr` do pacote kbd do Linux (GPL)
-- `src/ppm.zig`: leitura de PPM/PGM em texto e binário
+- `src/ppm.zig`: leitura de PPM/PGM em texto e binário; gravação em P3
 - `src/arquivos.zig`: lista de imagens da pasta (pra escolher dentro da janela)
 - `src/digitar.zig`: de tecla a letra (keysym → Unicode, tecla morta + letra = letra acentuada)
 - `src/alcas.zig`: alças de transformação (escala na coordenada da camada: `matriz·T(âncora)·S·T(−âncora)`; giro na janela em torno do centro)

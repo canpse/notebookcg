@@ -106,6 +106,26 @@ fn abrirImagem(init: std.process.Init, doc: *Documento, pasta: []const u8, relat
     try doc.adicionarImagem(img, std.fs.path.basename(relativo), centro);
 }
 
+/// Pinta a folha inteira (sem a vista: zoom e giro da tela não entram) e
+/// grava em P3 na pasta, com o primeiro nome livre: editor-1.ppm, editor-2.ppm...
+/// Devolve o nome usado (em `nome_buf`).
+fn salvar(init: std.process.Init, doc: *const Documento, pasta: []const u8, nome_buf: []u8) ![]const u8 {
+    var folha = try Tela.criar(init.gpa, doc.largura, doc.altura, opaco | 0xffffff);
+    defer folha.destruir();
+    doc.desenhar(&folha, Mat3.identidade);
+    const bytes = try ppm.escreverP3(init.gpa, &folha);
+    defer init.gpa.free(bytes);
+    var n: u32 = 1;
+    while (n < 1000) : (n += 1) {
+        const nome = try std.fmt.bufPrint(nome_buf, "{s}/editor-{d}.ppm", .{ pasta, n });
+        std.Io.Dir.cwd().access(init.io, nome, .{}) catch {
+            try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = nome, .data = bytes });
+            return nome;
+        };
+    }
+    return error.NomesEsgotados;
+}
+
 pub fn main(init: std.process.Init) !void {
     // A pasta onde procurar imagens: o primeiro argumento ou a atual.
     const args = try init.minimal.args.toSlice(init.arena.allocator());
@@ -304,6 +324,14 @@ pub fn main(init: std.process.Init) !void {
                                 if (aviso == null) modo = .mover;
                                 lista.?.deinit();
                                 lista = null;
+                            },
+                            .salvar => {
+                                var nome_buf: [std.fs.max_path_bytes]u8 = undefined;
+                                if (salvar(init, &doc, pasta, &nome_buf)) |nome| {
+                                    aviso = std.fmt.bufPrint(&aviso_buf, "salvo em {s} ({d}x{d})", .{ nome, doc.largura, doc.altura }) catch null;
+                                } else |err| {
+                                    aviso = std.fmt.bufPrint(&aviso_buf, "não salvou: {s}", .{@errorName(err)}) catch null;
+                                }
                             },
                             .cancelar_abrir => {
                                 lista.?.deinit();

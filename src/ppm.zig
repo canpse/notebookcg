@@ -96,6 +96,25 @@ fn cor(v: [3]u32, colorida: bool, maximo: u32) u32 {
     return opaco | r << 16 | g << 8 | b;
 }
 
+/// Grava em P3 (texto), o mesmo formato das atividades de PDI: dá pra
+/// abrir num editor de texto e conferir os números.
+pub fn escreverP3(gpa: std.mem.Allocator, t: *const Tela) std.mem.Allocator.Error![]u8 {
+    var saida: std.ArrayList(u8) = .empty;
+    errdefer saida.deinit(gpa);
+    // ~12 bytes por pixel ("255 255 255 ") é uma boa estimativa.
+    try saida.ensureTotalCapacity(gpa, t.pixels.len * 12 + 64);
+    var buf: [64]u8 = undefined;
+    try saida.appendSlice(gpa, std.fmt.bufPrint(&buf, "P3\n# editor-cg\n{d} {d}\n255\n", .{ t.largura, t.altura }) catch unreachable);
+    for (t.pixels, 0..) |p, i| {
+        const r = (p >> 16) & 0xff;
+        const g = (p >> 8) & 0xff;
+        const b = p & 0xff;
+        const fim: []const u8 = if ((i + 1) % t.largura == 0) "\n" else "  ";
+        try saida.appendSlice(gpa, std.fmt.bufPrint(&buf, "{d} {d} {d}{s}", .{ r, g, b, fim }) catch unreachable);
+    }
+    return saida.toOwnedSlice(gpa);
+}
+
 const testing = std.testing;
 
 test "P3 com comentário" {
@@ -127,4 +146,15 @@ test "arquivo cortado ou estranho dá erro, não quebra" {
     try testing.expectError(error.FormatoDesconhecido, ler(testing.allocator, "GIF89a"));
     try testing.expectError(error.CabecalhoRuim, ler(testing.allocator, "P3 0 2 255"));
     try testing.expectError(error.FaltamPixels, ler(testing.allocator, "P6 4 4 255\nab"));
+}
+
+test "gravar e ler de volta dá a mesma imagem" {
+    var t = try Tela.criar(testing.allocator, 3, 2, opaco);
+    defer t.destruir();
+    for (t.pixels, 0..) |*p, i| p.* = opaco | @as(u32, @intCast(i * 0x112233));
+    const bytes = try escreverP3(testing.allocator, &t);
+    defer testing.allocator.free(bytes);
+    var volta = try ler(testing.allocator, bytes);
+    defer volta.destruir();
+    try testing.expectEqualSlices(u32, t.pixels, volta.pixels);
 }
