@@ -248,7 +248,7 @@ pub fn desenhar(t: *Tela, l: *const Layout, sobre: ?usize, doc: *Documento, esta
         "digitando: Enter ou Esc termina · Backspace apaga"
     else switch (estado.modo) {
         .pincel => "arraste pra desenhar (se não for desenho, cria um)",
-        .mover => "clique seleciona · arraste move · q/e gira · -/= escala · r desfaz",
+        .mover => "arraste move · cantos escalam · lados esticam · bolinha gira (Shift: 15°)",
     };
     const texto = std.fmt.bufPrint(&buf, "{s}  ·  {s}", .{ doc.atual().nome(), dica }) catch return;
     _ = fonte.escrever(t, 10, l.rodape.y0 + 4, texto, cor.texto, 1);

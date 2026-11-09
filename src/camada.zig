@@ -96,6 +96,8 @@ pub const Camada = struct {
     conteudo: ?Caixa = null,
     nome_buf: [32]u8 = undefined,
     nome_len: u8 = 0,
+    /// Não mexe (o fundo): clicar no papel vazio não arrasta a folha.
+    travada: bool = false,
 
     pub fn nome(c: *const Camada) []const u8 {
         return c.nome_buf[0..c.nome_len];
@@ -229,6 +231,7 @@ pub const Documento = struct {
         errdefer fundo.pixels.destruir();
         try fundo.gerar();
         fundo.batizar("Fundo", .{});
+        fundo.travada = true;
         try d.camadas.append(gpa, fundo);
         return d;
     }
@@ -243,7 +246,7 @@ pub const Documento = struct {
     }
 
     /// Objeto novo do `tipo` com os parâmetros padrão, centrado em `centro`
-    /// (na folha), logo acima da selecionada; passa a ser o selecionado.
+    /// (na folha), no topo da pilha; passa a ser o selecionado.
     /// O desenho é uma folha transparente do tamanho do documento.
     pub fn adicionar(d: *Documento, tipo: Tipo, centro: Ponto) !void {
         const cor = paleta[d.criados % paleta.len];
@@ -267,8 +270,8 @@ pub const Documento = struct {
         }
         d.criados += 1;
         c.batizar("{s} {d}", .{ tipo.nome(), d.criados });
-        try d.camadas.insert(d.gpa, d.selecionada + 1, c);
-        d.selecionada += 1;
+        try d.camadas.append(d.gpa, c);
+        d.selecionada = d.camadas.items.len - 1;
     }
 
     /// Apaga a selecionada; a última que sobrar não sai.
@@ -310,6 +313,7 @@ pub const Documento = struct {
     pub fn transformar(d: *Documento, vista: Mat3, g: Mat3) void {
         const inv_vista = vista.inversa() orelse return;
         const c = d.atual();
+        if (c.travada) return;
         const nova = inv_vista.vezes(g).vezes(vista).vezes(c.matriz);
         if (nova.inversa() == null) return;
         c.matriz = nova;
@@ -338,22 +342,7 @@ pub const Documento = struct {
             janela.comporTransformada(&c.pixels, inv, caixa);
         }
     }
-
-    /// Contorno da camada selecionada: o retângulo do conteúdo levado pra
-    /// janela (gira e escala junto com a camada).
-    pub fn contorno(d: *Documento, janela: *Tela, vista: Mat3, cor: Cor) void {
-        const k = d.atual().cantos(vista) orelse return;
-        for (0..4) |i| {
-            const a = k[i];
-            const b = k[(i + 1) % 4];
-            janela.linha(arredondar(a.x), arredondar(a.y), arredondar(b.x), arredondar(b.y), 0, cor);
-        }
-    }
 };
-
-fn arredondar(v: f32) i32 {
-    return @intFromFloat(@round(std.math.clamp(v, -1e5, 1e5)));
-}
 
 const testing = std.testing;
 const origem: Ponto = .{ .x = 0, .y = 0 };
@@ -430,6 +419,23 @@ test "modelos viram objetos do próprio tamanho, centrados onde pediu" {
     try testing.expectEqual(@as(u16, 5 * 8 * 3), d.atual().pixels.largura);
     try testing.expectEqualStrings("Texto 3", d.atual().nome());
     try testing.expectError(error.AindaNaoTem, d.adicionar(.imagem, origem));
+}
+
+test "objeto novo vai pro topo mesmo com o fundo selecionado" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    try d.adicionar(.retangulo, origem);
+    d.selecionada = 0;
+    try d.adicionar(.elipse, origem);
+    try testing.expectEqual(@as(usize, 2), d.selecionada);
+    try testing.expect(d.atual().modelo == .elipse);
+}
+
+test "o fundo não sai do lugar" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    d.transformar(Mat3.identidade, Mat3.translacao(30, 0));
+    try testing.expectEqual(Mat3.identidade, d.atual().matriz);
 }
 
 test "mudar a cor gera de novo com a cor nova" {

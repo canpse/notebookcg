@@ -23,8 +23,8 @@ onde ela fica na folha. Mover, girar e escalar mudam só a matriz.
 - **cor**: a paleta no painel troca a cor do objeto selecionado (num desenho, a cor do pincel)
 - **texto**: um texto novo já nasce digitando (a primeira letra troca o "Texto" padrão); depois, clicar no campo TEXTO ou `Enter` volta a editar; `Enter`/`Esc` termina. Acentos pelo layout do sistema, com tecla morta (´ + a = á)
 - modo **Pincel** (`b`): arrastar desenha; se a selecionada não for um desenho, cria um por cima
-- modo **Mover** (`v`): clicar seleciona o objeto de cima que tem tinta ali; arrastar move; contorno azul
-- `q` / `e`: gira o objeto 15° em torno do centro dele; `-` / `=`: diminui / aumenta; `r`: desfaz
+- modo **Mover** (`v`): clicar seleciona o objeto de cima que tem tinta ali; arrastar move. No selecionado aparecem as **alças**: cantos escalam mantendo a proporção (canto oposto parado), o meio dos lados estica só naquela direção (ao longo do objeto, mesmo girado), a bolinha de cima gira em torno do centro (`Shift`: de 15 em 15°). O fundo é travado (clicar no papel vazio não arrasta a folha)
+- atalhos que fazem o mesmo: `q` / `e` gira 15°; `-` / `=` diminui / aumenta; `r` desfaz giro e escala (fica no lugar)
 - `n`: desenho novo; `Tab`: próxima camada; `Page Up` / `Page Down`: sobe / desce; `Delete`: apaga; `c`: limpa o desenho
 - rodinha: zoom da vista em torno do cursor; botão direito arrastando: move a vista; `Shift+q/e`: gira a vista; `0`: vista inicial
 - `Esc`: sai
@@ -42,5 +42,6 @@ O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 - `src/fonte.zig`: texto com fonte bitmap 8×16 (carimba a grade de bits de cada letra; lê UTF-8)
 - `src/fonte_dados.zig`: os glifos (ASCII + Latin-1), gerados por `ferramentas/fonte_psf.py` a partir da fonte de console `eurlatgr` do pacote kbd do Linux (GPL)
 - `src/digitar.zig`: de tecla a letra (keysym → Unicode, tecla morta + letra = letra acentuada)
+- `src/alcas.zig`: alças de transformação (escala na coordenada da camada: `matriz·T(âncora)·S·T(−âncora)`; giro na janela em torno do centro)
 - `src/ui.zig`: menus dentro da janela (barra, painel de camadas, rodapé); o mesmo layout desenha e responde ao clique
 - `src/main.zig`: o laço principal (teclas, mouse, modos)

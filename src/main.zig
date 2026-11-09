@@ -10,10 +10,10 @@ const Documento = @import("camada.zig").Documento;
 const ui = @import("ui.zig");
 const Modo = ui.Modo;
 const Digitacao = @import("digitar.zig").Digitacao;
+const alcas = @import("alcas.zig");
 
 const papel = opaco | 0xf4f1ea;
 const mesa = opaco | 0x3a3a3c;
-const cor_selecao = opaco | 0x2f7df6;
 const raio_pincel = 2;
 
 const largura_folha = 900;
@@ -99,6 +99,8 @@ pub fn main(init: std.process.Init) !void {
     var pincel: ?PontoInt = null;
     var arrasto_camada: ?PontoInt = null;
     var arrasto_vista: ?PontoInt = null;
+    var arrasto_alca: ?alcas.Arrasto = null;
+    var sobre_alca: ?alcas.Alca = null;
     // Botão do menu embaixo do mouse (fica destacado).
     var sobre: ?usize = null;
     var cor_pincel = ui.paleta[0];
@@ -171,7 +173,13 @@ pub fn main(init: std.process.Init) !void {
                         tecla.page_up => doc.mover(1),
                         tecla.page_down => doc.mover(-1),
                         tecla.c => doc.atual().limpar(),
-                        tecla.r => doc.atual().matriz = Mat3.identidade,
+                        // Desfaz giro e escala, mas deixa o objeto onde está.
+                        tecla.r => if (!doc.atual().travada) {
+                            const cam = doc.atual();
+                            const meio = cam.centro();
+                            const na_folha = cam.matriz.aplicar(meio.x, meio.y);
+                            cam.matriz = Mat3.translacao(na_folha.x - meio.x, na_folha.y - meio.y);
+                        },
                         tecla.zero => vista = vistaInicial(&tela),
                         // q/e giram a camada em torno do centro dela; com shift, a vista.
                         tecla.q, tecla.e => {
@@ -236,6 +244,7 @@ pub fn main(init: std.process.Init) !void {
                             if (!b.apertou) {
                                 pincel = null;
                                 arrasto_camada = null;
+                                arrasto_alca = null;
                                 continue;
                             }
                             switch (modo) {
@@ -248,8 +257,15 @@ pub fn main(init: std.process.Init) !void {
                                     pincel = q;
                                 },
                                 .mover => {
+                                    // Alça do selecionado primeiro (ela fica por
+                                    // cima de tudo); senão, seleciona e move.
+                                    if (alcas.tocar(doc.atual(), vista, b.x, b.y)) |a| {
+                                        arrasto_alca = alcas.Arrasto.iniciar(doc.atual(), vista, a, b.x, b.y);
+                                        mudou = true;
+                                        continue;
+                                    }
                                     if (doc.tocar(vista, b.x, b.y)) |i| doc.selecionada = i;
-                                    arrasto_camada = .{ .x = b.x, .y = b.y };
+                                    if (!doc.atual().travada) arrasto_camada = .{ .x = b.x, .y = b.y };
                                 },
                             }
                             mudou = true;
@@ -279,6 +295,17 @@ pub fn main(init: std.process.Init) !void {
                             mudou = true;
                         }
                     }
+                    if (modo == .mover and arrasto_alca == null) {
+                        const nova = alcas.tocar(doc.atual(), vista, m.x, m.y);
+                        if (nova != sobre_alca) {
+                            sobre_alca = nova;
+                            mudou = true;
+                        }
+                    }
+                    if (arrasto_alca) |*ar| {
+                        ar.mover(doc.atual(), vista, m.x, m.y, shift);
+                        mudou = true;
+                    }
                     if (arrasto_camada) |*a| {
                         doc.transformar(vista, Mat3.translacao(@floatFromInt(m.x - a.x), @floatFromInt(m.y - a.y)));
                         a.* = .{ .x = m.x, .y = m.y };
@@ -295,7 +322,7 @@ pub fn main(init: std.process.Init) !void {
         if (mudou) {
             tela.limpar(mesa);
             doc.desenhar(&tela, vista);
-            if (modo == .mover) doc.contorno(&tela, vista, cor_selecao);
+            if (modo == .mover) alcas.desenhar(&tela, doc.atual(), vista, sobre_alca);
             const estado: ui.Estado = .{ .modo = modo, .cor = cor_pincel, .editando = editando };
             const layout = ui.montar(tela.largura, tela.altura, &doc, estado);
             ui.desenhar(&tela, &layout, sobre, &doc, estado);
@@ -313,4 +340,5 @@ test {
     _ = @import("fonte.zig");
     _ = @import("ui.zig");
     _ = @import("digitar.zig");
+    _ = @import("alcas.zig");
 }
