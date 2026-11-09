@@ -57,6 +57,24 @@ pub const Texto = struct {
         @memcpy(t.buf[0..n], s[0..n]);
         t.len = @intCast(n);
     }
+
+    /// Põe um caractere no fim (em UTF-8). Sem espaço, não põe.
+    pub fn inserir(t: *Texto, c: u21) void {
+        var tmp: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(c, &tmp) catch return;
+        if (t.len + n > t.buf.len) return;
+        @memcpy(t.buf[t.len..][0..n], tmp[0..n]);
+        t.len += n;
+    }
+
+    /// Tira o último caractere (que pode ter mais de um byte: "ã" tem 2).
+    pub fn apagarUltimo(t: *Texto) void {
+        while (t.len > 0) {
+            t.len -= 1;
+            // Bytes 10xxxxxx são continuação: segue até o começo da letra.
+            if (t.buf[t.len] & 0xc0 != 0x80) break;
+        }
+    }
 };
 
 pub const Modelo = union(Tipo) {
@@ -124,14 +142,33 @@ pub const Camada = struct {
         c.conteudo = .{ .x0 = 0, .y0 = 0, .x1 = nova.largura, .y1 = nova.altura };
     }
 
+    /// Cor do modelo (o desenho não tem uma só: cada traço tem a dele).
+    pub fn cor(c: *const Camada) ?Cor {
+        return switch (c.modelo) {
+            .retangulo, .elipse => |f| f.cor,
+            .texto => |t| t.cor,
+            .desenho, .imagem => null,
+        };
+    }
+
+    /// Troca a cor do modelo e gera os pixels de novo.
+    pub fn mudarCor(c: *Camada, nova: Cor) !void {
+        switch (c.modelo) {
+            .retangulo, .elipse => |*f| f.cor = nova,
+            .texto => |*t| t.cor = nova,
+            .desenho, .imagem => return,
+        }
+        try c.gerar();
+    }
+
     /// camada → janela
     pub fn naJanela(c: *const Camada, vista: Mat3) Mat3 {
         return vista.vezes(c.matriz);
     }
 
     /// Traço de pincel em coordenadas da camada.
-    pub fn pincel(c: *Camada, x0: i32, y0: i32, x1: i32, y1: i32, raio: i32, cor: Cor) void {
-        c.pixels.linha(x0, y0, x1, y1, raio, cor);
+    pub fn pincel(c: *Camada, x0: i32, y0: i32, x1: i32, y1: i32, raio: i32, cor_traco: Cor) void {
+        c.pixels.linha(x0, y0, x1, y1, raio, cor_traco);
         const tocado: Caixa = .{ .x0 = @min(x0, x1) - raio, .y0 = @min(y0, y1) - raio, .x1 = @max(x0, x1) + raio + 1, .y1 = @max(y0, y1) + raio + 1 };
         if (tocado.recortar(c.pixels.largura, c.pixels.altura)) |t| c.conteudo = Caixa.unir(c.conteudo, t);
     }
@@ -393,6 +430,26 @@ test "modelos viram objetos do próprio tamanho, centrados onde pediu" {
     try testing.expectEqual(@as(u16, 5 * 8 * 3), d.atual().pixels.largura);
     try testing.expectEqualStrings("Texto 3", d.atual().nome());
     try testing.expectError(error.AindaNaoTem, d.adicionar(.imagem, origem));
+}
+
+test "mudar a cor gera de novo com a cor nova" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    try d.adicionar(.retangulo, .{ .x = 50, .y = 50 });
+    try d.atual().mudarCor(opaco | 0x123456);
+    try testing.expectEqual(opaco | 0x123456, d.atual().pixels.pixels[0]);
+    try testing.expectEqual(@as(?Cor, opaco | 0x123456), d.atual().cor());
+}
+
+test "inserir e apagar no texto respeitam UTF-8" {
+    var t: Texto = .{ .cor = 0 };
+    t.trocar("S");
+    t.inserir('ã');
+    t.inserir('o');
+    try testing.expectEqualStrings("São", t.conteudo());
+    t.apagarUltimo();
+    t.apagarUltimo();
+    try testing.expectEqualStrings("S", t.conteudo());
 }
 
 test "mudar um parâmetro e gerar de novo muda os pixels" {

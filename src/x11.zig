@@ -12,8 +12,9 @@ pub const Evento = union(enum) {
     /// O servidor perdeu o conteúdo da janela e quer que a gente mande de novo.
     expor,
     redimensionar: struct { largura: u16, altura: u16 },
-    /// `codigo` é a posição física da tecla, não a letra.
-    tecla: struct { codigo: u8, apertou: bool },
+    /// `codigo` é a posição física da tecla, não a letra (pra letra, ver
+    /// `Janela.simbolo`). `estado` tem os modificadores: 1 shift, 2 caps lock.
+    tecla: struct { codigo: u8, apertou: bool, estado: u16 = 0 },
     botao: struct { numero: u8, apertou: bool, x: i16, y: i16 },
     movimento: struct { x: i16, y: i16 },
 };
@@ -24,6 +25,7 @@ const op_mapear_janela = 8;
 const op_internar_atomo = 16;
 const op_mudar_propriedade = 18;
 const op_criar_gc = 55;
+const op_mapa_teclado = 101;
 const op_enviar_imagem = 72;
 
 const atomo_atom = 4;
@@ -49,6 +51,9 @@ pub const Janela = struct {
     atomo_fechar: u32,
     entrada: [4096]u8 = undefined,
     n_entrada: usize = 0,
+    /// Pra cada tecla física, o símbolo sem e com shift (keysym do X11),
+    /// conforme o layout de teclado configurado no sistema.
+    mapa: [256][2]u32 = [_][2]u32{.{ 0, 0 }} ** 256,
 
     pub fn abrir(
         gpa: std.mem.Allocator,
@@ -105,6 +110,7 @@ pub const Janela = struct {
         };
         j.atomo_protocolos = try j.internarAtomo("WM_PROTOCOLS");
         j.atomo_fechar = try j.internarAtomo("WM_DELETE_WINDOW");
+        try j.lerMapaTeclado(gpa, resto[26], resto[27]);
 
         // 3. Cria a janela (ainda invisível), filha da raiz.
         p = .{};
@@ -217,7 +223,7 @@ pub const Janela = struct {
                 std.debug.print("erro do X11: código {d} na requisição {d}\n", .{ b[1], b[10] });
                 return null;
             },
-            2, 3 => .{ .tecla = .{ .codigo = b[1], .apertou = tipo == 2 } },
+            2, 3 => .{ .tecla = .{ .codigo = b[1], .apertou = tipo == 2, .estado = ler16(b, 28) } },
             4, 5 => .{ .botao = .{ .numero = b[1], .apertou = tipo == 4, .x = lerI16(b, 24), .y = lerI16(b, 26) } },
             6 => .{ .movimento = .{ .x = lerI16(b, 24), .y = lerI16(b, 26) } },
             // Uma exposição pode vir em vários pedaços; basta redesenhar no último.
@@ -226,6 +232,44 @@ pub const Janela = struct {
             33 => if (ler32(b, 8) == j.atomo_protocolos and ler32(b, 12) == j.atomo_fechar) .fechar else null,
             else => null,
         };
+    }
+
+    /// Símbolo (keysym) que a tecla escreve com os modificadores do evento.
+    /// 0 = nada. Caps lock só vale pra letras.
+    pub fn simbolo(j: *const Janela, codigo: u8, estado: u16) u32 {
+        const par = j.mapa[codigo];
+        const sem = par[0];
+        const com = if (par[1] != 0) par[1] else sem;
+        var shift = estado & 1 != 0;
+        const letra = (sem >= 'a' and sem <= 'z') or (sem >= 0xe0 and sem <= 0xfe and sem != 0xf7);
+        if (estado & 2 != 0 and letra) shift = !shift;
+        return if (shift) com else sem;
+    }
+
+    /// Pede ao servidor a tabela tecla → símbolos (GetKeyboardMapping). Como
+    /// `internarAtomo`, só funciona antes de a janela existir.
+    fn lerMapaTeclado(j: *Janela, gpa: std.mem.Allocator, primeira: u8, ultima: u8) !void {
+        var p: Pacote = .{};
+        p.c8(op_mapa_teclado);
+        p.c8(0);
+        p.c16(2);
+        p.c8(primeira);
+        p.c8(ultima - primeira + 1);
+        p.c16(0);
+        try escreverTudo(j.fd, p.bytes());
+        var cab: [32]u8 = undefined;
+        try lerTudo(j.fd, &cab);
+        if (cab[0] != 1) return error.RespostaInesperada;
+        const por_tecla: usize = cab[1];
+        const corpo = try gpa.alloc(u8, @as(usize, ler32(&cab, 4)) * 4);
+        defer gpa.free(corpo);
+        try lerTudo(j.fd, corpo);
+        var codigo: usize = primeira;
+        while (codigo <= ultima) : (codigo += 1) {
+            const base = (codigo - primeira) * por_tecla * 4;
+            if (base + 8 > corpo.len or por_tecla < 2) break;
+            j.mapa[codigo] = .{ ler32(corpo, base), ler32(corpo, base + 4) };
+        }
     }
 
     /// Átomo é o número que o servidor dá pra um nome. Só funciona antes de a

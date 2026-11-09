@@ -9,10 +9,10 @@ const Ponto = m3.Ponto;
 const Documento = @import("camada.zig").Documento;
 const ui = @import("ui.zig");
 const Modo = ui.Modo;
+const Digitacao = @import("digitar.zig").Digitacao;
 
 const papel = opaco | 0xf4f1ea;
 const mesa = opaco | 0x3a3a3c;
-const tinta = opaco | 0x1d1d1f;
 const cor_selecao = opaco | 0x2f7df6;
 const raio_pincel = 2;
 
@@ -42,6 +42,7 @@ const tecla = struct {
     const page_up = 112;
     const page_down = 117;
     const delete = 119;
+    const enter = 36;
 };
 
 // Botões do mouse no X11: 1 esquerdo, 3 direito, 4 e 5 a rodinha.
@@ -100,13 +101,19 @@ pub fn main(init: std.process.Init) !void {
     var arrasto_vista: ?PontoInt = null;
     // Botão do menu embaixo do mouse (fica destacado).
     var sobre: ?usize = null;
+    var cor_pincel = ui.paleta[0];
+    // Digitando no texto selecionado. `substituir`: a primeira letra apaga o
+    // texto padrão ("Texto") em vez de continuar depois dele.
+    var editando = false;
+    var substituir = false;
+    var digitacao: Digitacao = .{};
     var mudou = true;
 
     laco: while (true) {
         // Dorme até chegar um evento, trata todos os que já chegaram e só então redesenha.
         var evento = try janela.proximo(true);
         while (evento) |e| : (evento = try janela.proximo(false)) {
-            const layout = ui.montar(tela.largura, tela.altura, &doc, modo);
+            const layout = ui.montar(tela.largura, tela.altura, &doc, .{ .modo = modo, .cor = cor_pincel, .editando = editando });
             switch (e) {
                 .fechar => break :laco,
                 .expor => mudou = true,
@@ -120,6 +127,35 @@ pub fn main(init: std.process.Init) !void {
                         continue;
                     }
                     if (!t.apertou) continue;
+                    if (editando) {
+                        // Digitando: toda tecla vai pro texto, nada de atalho.
+                        if (doc.atual().modelo != .texto) {
+                            editando = false;
+                            continue;
+                        }
+                        const tx = &doc.atual().modelo.texto;
+                        switch (digitacao.traduzir(janela.simbolo(t.codigo, t.estado))) {
+                            .letra => |c| {
+                                if (substituir) tx.trocar("");
+                                tx.inserir(c);
+                            },
+                            .apagar => {
+                                if (substituir) tx.trocar("") else tx.apagarUltimo();
+                            },
+                            .confirmar, .cancelar => editando = false,
+                            .nada => continue,
+                        }
+                        substituir = false;
+                        try doc.atual().gerar();
+                        mudou = true;
+                        continue;
+                    }
+                    if (t.codigo == tecla.enter and doc.atual().modelo == .texto) {
+                        editando = true;
+                        substituir = false;
+                        mudou = true;
+                        continue;
+                    }
                     const cj = centroDaArea(&tela);
                     const c = doc.centroNaJanela(vista);
                     switch (t.codigo) {
@@ -159,21 +195,41 @@ pub fn main(init: std.process.Init) !void {
                     if (b.apertou and layout.dentro(b.x, b.y)) {
                         if (b.numero != botao.esquerdo) continue;
                         const acao = layout.clicar(b.x, b.y) orelse continue;
+                        // Clicar em qualquer coisa do menu termina a digitação,
+                        // menos na cor (dá pra trocar a cor enquanto digita).
+                        if (acao != .cor) editando = false;
                         switch (acao) {
                             .adicionar => |tipo| {
                                 const inv = vista.inversa() orelse continue;
                                 const cj = centroDaArea(&tela);
                                 try doc.adicionar(tipo, inv.aplicar(cj.x, cj.y));
                                 modo = if (tipo == .desenho) .pincel else .mover;
+                                // Texto novo já nasce digitando.
+                                if (tipo == .texto) {
+                                    editando = true;
+                                    substituir = true;
+                                }
                             },
                             .modo => |m| modo = m,
                             .selecionar => |i| doc.selecionada = i,
                             .subir => doc.mover(1),
                             .descer => doc.mover(-1),
                             .apagar => doc.apagar(),
+                            .cor => |c| {
+                                cor_pincel = c;
+                                try doc.atual().mudarCor(c);
+                            },
+                            .editar_texto => {
+                                editando = true;
+                                substituir = false;
+                            },
                         }
                         mudou = true;
                         continue;
+                    }
+                    if (b.apertou and editando) {
+                        editando = false;
+                        mudou = true;
                     }
                     switch (b.numero) {
                         botao.esquerdo => {
@@ -188,7 +244,7 @@ pub fn main(init: std.process.Init) !void {
                                     // outro modelo, abre um desenho novo por cima.
                                     if (doc.atual().modelo != .desenho) try doc.adicionar(.desenho, .{ .x = 0, .y = 0 });
                                     const q = naCamada(&doc, vista, b.x, b.y) orelse continue;
-                                    doc.atual().pincel(q.x, q.y, q.x, q.y, raio_pincel, tinta);
+                                    doc.atual().pincel(q.x, q.y, q.x, q.y, raio_pincel, cor_pincel);
                                     pincel = q;
                                 },
                                 .mover => {
@@ -218,7 +274,7 @@ pub fn main(init: std.process.Init) !void {
                     // anterior ao atual com uma linha é o que evita o traço pontilhado.
                     if (pincel) |*p| {
                         if (naCamada(&doc, vista, m.x, m.y)) |q| {
-                            doc.atual().pincel(p.x, p.y, q.x, q.y, raio_pincel, tinta);
+                            doc.atual().pincel(p.x, p.y, q.x, q.y, raio_pincel, cor_pincel);
                             p.* = q;
                             mudou = true;
                         }
@@ -240,8 +296,9 @@ pub fn main(init: std.process.Init) !void {
             tela.limpar(mesa);
             doc.desenhar(&tela, vista);
             if (modo == .mover) doc.contorno(&tela, vista, cor_selecao);
-            const layout = ui.montar(tela.largura, tela.altura, &doc, modo);
-            ui.desenhar(&tela, &layout, sobre, &doc, modo);
+            const estado: ui.Estado = .{ .modo = modo, .cor = cor_pincel, .editando = editando };
+            const layout = ui.montar(tela.largura, tela.altura, &doc, estado);
+            ui.desenhar(&tela, &layout, sobre, &doc, estado);
             try janela.mostrar(tela.pixels, tela.largura, tela.altura);
             mudou = false;
         }
@@ -255,4 +312,5 @@ test {
     _ = @import("camada.zig");
     _ = @import("fonte.zig");
     _ = @import("ui.zig");
+    _ = @import("digitar.zig");
 }
