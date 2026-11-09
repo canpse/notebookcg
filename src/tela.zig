@@ -21,6 +21,10 @@ pub const Caixa = struct {
         return .{ .x0 = @min(c.x0, b.x0), .y0 = @min(c.y0, b.y0), .x1 = @max(c.x1, b.x1), .y1 = @max(c.y1, b.y1) };
     }
 
+    pub fn contem(c: Caixa, x: i32, y: i32) bool {
+        return x >= c.x0 and x < c.x1 and y >= c.y0 and y < c.y1;
+    }
+
     /// Parte da caixa que cabe em (0,0)–(largura,altura); null se nada.
     pub fn recortar(c: Caixa, largura: i32, altura: i32) ?Caixa {
         const r: Caixa = .{ .x0 = @max(c.x0, 0), .y0 = @max(c.y0, 0), .x1 = @min(c.x1, largura), .y1 = @min(c.y1, altura) };

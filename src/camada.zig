@@ -1,7 +1,11 @@
-//! Camadas: cada uma é um objeto com os próprios pixels (com transparência)
-//! e a própria matriz, que leva da camada pra folha. Mover, girar ou
-//! escalar uma camada é só trocar a matriz dela; os pixels não mudam, então
-//! dá pra girar e voltar sem perder qualidade.
+//! Camadas: cada uma é um objeto feito a partir de um MODELO (o que ela é:
+//! desenho, retângulo, elipse, texto...) com os parâmetros dele, mais uma
+//! matriz que leva da camada pra folha.
+//!
+//! O modelo é a descrição; os pixels da camada são a imagem gerada a partir
+//! dele (modelo → imagem, que é a definição de computação gráfica). Mudar um
+//! parâmetro é gerar os pixels de novo. Mover, girar ou escalar é só trocar a
+//! matriz: os pixels não mudam, então dá pra girar e voltar sem perder nada.
 //!
 //! Pra mostrar na janela, cada pixel da camada passa por duas matrizes:
 //! camada → folha (a da camada) e folha → janela (a vista). As camadas são
@@ -12,17 +16,113 @@ const tela_ = @import("tela.zig");
 const Tela = tela_.Tela;
 const Cor = tela_.Cor;
 const Caixa = tela_.Caixa;
+const opaco = tela_.opaco;
 const m3 = @import("mat3.zig");
 const Mat3 = m3.Mat3;
 const Ponto = m3.Ponto;
+const fonte = @import("fonte.zig");
+
+pub const Tipo = enum {
+    desenho,
+    retangulo,
+    elipse,
+    texto,
+    imagem,
+
+    pub fn nome(t: Tipo) []const u8 {
+        return switch (t) {
+            .desenho => "Desenho",
+            .retangulo => "Retângulo",
+            .elipse => "Elipse",
+            .texto => "Texto",
+            .imagem => "Imagem",
+        };
+    }
+};
+
+pub const Forma = struct { largura: u16, altura: u16, cor: Cor };
+
+pub const Texto = struct {
+    buf: [64]u8 = undefined,
+    len: u8 = 0,
+    cor: Cor,
+    escala: u8 = 3,
+
+    pub fn conteudo(t: *const Texto) []const u8 {
+        return t.buf[0..t.len];
+    }
+
+    pub fn trocar(t: *Texto, s: []const u8) void {
+        const n = @min(s.len, t.buf.len);
+        @memcpy(t.buf[0..n], s[0..n]);
+        t.len = @intCast(n);
+    }
+};
+
+pub const Modelo = union(Tipo) {
+    /// Pincel livre: aqui os próprios pixels são o modelo.
+    desenho,
+    retangulo: Forma,
+    elipse: Forma,
+    texto: Texto,
+    imagem,
+};
 
 pub const Camada = struct {
     pixels: Tela,
+    modelo: Modelo,
     /// camada → folha
     matriz: Mat3 = Mat3.identidade,
     /// Onde tem tinta, em pixels da camada (null = vazia). Serve pra
     /// desenhar só essa parte, pro contorno da seleção e pro centro do giro.
     conteudo: ?Caixa = null,
+    nome_buf: [32]u8 = undefined,
+    nome_len: u8 = 0,
+
+    pub fn nome(c: *const Camada) []const u8 {
+        return c.nome_buf[0..c.nome_len];
+    }
+
+    fn batizar(c: *Camada, comptime fmt: []const u8, args: anytype) void {
+        const s = std.fmt.bufPrint(&c.nome_buf, fmt, args) catch c.nome_buf[0..];
+        c.nome_len = @intCast(s.len);
+    }
+
+    /// Gera os pixels a partir do modelo (no desenho não há o que gerar).
+    pub fn gerar(c: *Camada) !void {
+        const gpa = c.pixels.gpa;
+        var nova: Tela = switch (c.modelo) {
+            .desenho, .imagem => return,
+            .retangulo => |f| try Tela.criar(gpa, f.largura, f.altura, f.cor),
+            .elipse => |f| blk: {
+                var t = try Tela.criar(gpa, f.largura, f.altura, 0);
+                // Pixel dentro se (x/rx)² + (y/ry)² ≤ 1, medindo do centro
+                // da elipse até o centro do pixel.
+                const rx = @as(f32, @floatFromInt(f.largura)) / 2;
+                const ry = @as(f32, @floatFromInt(f.altura)) / 2;
+                for (0..f.altura) |y| {
+                    const dy = (@as(f32, @floatFromInt(y)) + 0.5 - ry) / ry;
+                    for (0..f.largura) |x| {
+                        const dx = (@as(f32, @floatFromInt(x)) + 0.5 - rx) / rx;
+                        if (dx * dx + dy * dy <= 1) t.pixels[y * f.largura + x] = f.cor;
+                    }
+                }
+                break :blk t;
+            },
+            .texto => |*tx| blk: {
+                const s = tx.conteudo();
+                const esc: i32 = tx.escala;
+                const l: u16 = @intCast(@max(1, fonte.medir(s, esc)));
+                var t = try Tela.criar(gpa, l, @intCast(fonte.altura * esc), 0);
+                _ = fonte.escrever(&t, 0, 0, s, tx.cor, esc);
+                break :blk t;
+            },
+        };
+        errdefer nova.destruir();
+        c.pixels.destruir();
+        c.pixels = nova;
+        c.conteudo = .{ .x0 = 0, .y0 = 0, .x1 = nova.largura, .y1 = nova.altura };
+    }
 
     /// camada → janela
     pub fn naJanela(c: *const Camada, vista: Mat3) Mat3 {
@@ -37,6 +137,7 @@ pub const Camada = struct {
     }
 
     pub fn limpar(c: *Camada) void {
+        if (c.modelo != .desenho) return;
         c.pixels.limpar(0);
         c.conteudo = null;
     }
@@ -67,6 +168,9 @@ pub const Camada = struct {
     }
 };
 
+/// Cores que os objetos novos vão recebendo, pra dar pra distinguir.
+const paleta = [_]Cor{ opaco | 0x2f7df6, opaco | 0xf59e0b, opaco | 0x10b981, opaco | 0xef4444, opaco | 0x8b5cf6 };
+
 pub const Documento = struct {
     gpa: std.mem.Allocator,
     /// Da de baixo (0, o fundo) pra de cima.
@@ -74,15 +178,21 @@ pub const Documento = struct {
     selecionada: usize = 0,
     largura: u16,
     altura: u16,
+    /// Quantos objetos já foram criados (dá o número no nome).
+    criados: u32 = 0,
 
-    /// Documento com uma camada de fundo opaca, já selecionada.
+    /// Documento com um retângulo de fundo do tamanho da folha, selecionado.
     pub fn criar(gpa: std.mem.Allocator, largura: u16, altura: u16, papel: Cor) !Documento {
         var d: Documento = .{ .gpa = gpa, .largura = largura, .altura = altura };
         errdefer d.destruir();
-        try d.camadas.append(gpa, .{
-            .pixels = try Tela.criar(gpa, largura, altura, papel),
-            .conteudo = .{ .x0 = 0, .y0 = 0, .x1 = largura, .y1 = altura },
-        });
+        var fundo: Camada = .{
+            .pixels = try Tela.criar(gpa, 1, 1, 0),
+            .modelo = .{ .retangulo = .{ .largura = largura, .altura = altura, .cor = papel } },
+        };
+        errdefer fundo.pixels.destruir();
+        try fundo.gerar();
+        fundo.batizar("Fundo", .{});
+        try d.camadas.append(gpa, fundo);
         return d;
     }
 
@@ -95,11 +205,32 @@ pub const Documento = struct {
         return &d.camadas.items[d.selecionada];
     }
 
-    /// Camada transparente nova logo acima da selecionada, e passa a ser ela.
-    pub fn novaCamada(d: *Documento) !void {
-        var pixels = try Tela.criar(d.gpa, d.largura, d.altura, 0);
-        errdefer pixels.destruir();
-        try d.camadas.insert(d.gpa, d.selecionada + 1, .{ .pixels = pixels });
+    /// Objeto novo do `tipo` com os parâmetros padrão, centrado em `centro`
+    /// (na folha), logo acima da selecionada; passa a ser o selecionado.
+    /// O desenho é uma folha transparente do tamanho do documento.
+    pub fn adicionar(d: *Documento, tipo: Tipo, centro: Ponto) !void {
+        const cor = paleta[d.criados % paleta.len];
+        var c: Camada = switch (tipo) {
+            .desenho => .{ .pixels = try Tela.criar(d.gpa, d.largura, d.altura, 0), .modelo = .desenho },
+            .retangulo => .{ .pixels = try Tela.criar(d.gpa, 1, 1, 0), .modelo = .{ .retangulo = .{ .largura = 200, .altura = 120, .cor = cor } } },
+            .elipse => .{ .pixels = try Tela.criar(d.gpa, 1, 1, 0), .modelo = .{ .elipse = .{ .largura = 160, .altura = 160, .cor = cor } } },
+            .texto => blk: {
+                var t: Texto = .{ .cor = opaco | 0x1d1d1f };
+                t.trocar("Texto");
+                break :blk .{ .pixels = try Tela.criar(d.gpa, 1, 1, 0), .modelo = .{ .texto = t } };
+            },
+            .imagem => return error.AindaNaoTem,
+        };
+        errdefer c.pixels.destruir();
+        try c.gerar();
+        if (tipo != .desenho) {
+            const l: f32 = @floatFromInt(c.pixels.largura);
+            const a: f32 = @floatFromInt(c.pixels.altura);
+            c.matriz = Mat3.translacao(@round(centro.x - l / 2), @round(centro.y - a / 2));
+        }
+        d.criados += 1;
+        c.batizar("{s} {d}", .{ tipo.nome(), d.criados });
+        try d.camadas.insert(d.gpa, d.selecionada + 1, c);
         d.selecionada += 1;
     }
 
@@ -188,12 +319,12 @@ fn arredondar(v: f32) i32 {
 }
 
 const testing = std.testing;
-const opaco = tela_.opaco;
+const origem: Ponto = .{ .x = 0, .y = 0 };
 
 test "clicar seleciona a camada de cima que tem tinta ali" {
     var d = try Documento.criar(testing.allocator, 50, 50, opaco | 0xffffff);
     defer d.destruir();
-    try d.novaCamada();
+    try d.adicionar(.desenho, origem);
     d.atual().pincel(10, 10, 20, 10, 1, opaco);
     try testing.expectEqual(@as(?usize, 1), d.tocar(Mat3.identidade, 15, 10));
     // Longe do traço só tem o fundo.
@@ -203,7 +334,7 @@ test "clicar seleciona a camada de cima que tem tinta ali" {
 test "mover a camada leva a tinta junto e o clique acompanha" {
     var d = try Documento.criar(testing.allocator, 50, 50, opaco | 0xffffff);
     defer d.destruir();
-    try d.novaCamada();
+    try d.adicionar(.desenho, origem);
     d.atual().pincel(10, 10, 10, 10, 0, opaco | 0xff0000);
     d.transformar(Mat3.identidade, Mat3.translacao(20, 5));
     try testing.expectEqual(@as(?usize, 1), d.tocar(Mat3.identidade, 30, 15));
@@ -219,7 +350,7 @@ test "mover a camada leva a tinta junto e o clique acompanha" {
 test "arrastar na janela com a vista com zoom move a mesma distância na tela" {
     var d = try Documento.criar(testing.allocator, 50, 50, opaco);
     defer d.destruir();
-    try d.novaCamada();
+    try d.adicionar(.desenho, origem);
     d.atual().pincel(5, 5, 5, 5, 0, opaco);
     const vista = Mat3.escala(2, 2);
     const antes = d.centroNaJanela(vista);
@@ -231,8 +362,8 @@ test "arrastar na janela com a vista com zoom move a mesma distância na tela" {
 test "ordem das camadas: subir, descer e apagar" {
     var d = try Documento.criar(testing.allocator, 8, 8, opaco);
     defer d.destruir();
-    try d.novaCamada();
-    try d.novaCamada();
+    try d.adicionar(.desenho, origem);
+    try d.adicionar(.desenho, origem);
     d.atual().pincel(1, 1, 1, 1, 0, opaco | 0xabcdef);
     d.mover(-1);
     try testing.expectEqual(@as(usize, 1), d.selecionada);
@@ -240,6 +371,35 @@ test "ordem das camadas: subir, descer e apagar" {
     d.apagar();
     try testing.expectEqual(@as(usize, 2), d.camadas.items.len);
     d.apagar();
-    d.apagar(); // o fundo sozinho não sai
+    d.apagar(); // a última não sai
     try testing.expectEqual(@as(usize, 1), d.camadas.items.len);
+}
+
+test "modelos viram objetos do próprio tamanho, centrados onde pediu" {
+    var d = try Documento.criar(testing.allocator, 400, 300, opaco | 0xffffff);
+    defer d.destruir();
+    try d.adicionar(.retangulo, .{ .x = 200, .y = 150 });
+    try testing.expectEqualStrings("Retângulo 1", d.atual().nome());
+    try testing.expectEqual(@as(u16, 200), d.atual().pixels.largura);
+    // O centro do retângulo cai no centro pedido: clicar ali acha ele.
+    try testing.expectEqual(@as(?usize, 1), d.tocar(Mat3.identidade, 200, 150));
+
+    try d.adicionar(.elipse, .{ .x = 100, .y = 100 });
+    // O canto da caixa da elipse é transparente: o clique passa pro de baixo.
+    try testing.expect(!d.atual().temTinta(0, 0));
+    try testing.expect(d.atual().temTinta(80, 80));
+
+    try d.adicionar(.texto, .{ .x = 0, .y = 0 });
+    try testing.expectEqual(@as(u16, 5 * 8 * 3), d.atual().pixels.largura);
+    try testing.expectEqualStrings("Texto 3", d.atual().nome());
+    try testing.expectError(error.AindaNaoTem, d.adicionar(.imagem, origem));
+}
+
+test "mudar um parâmetro e gerar de novo muda os pixels" {
+    var d = try Documento.criar(testing.allocator, 100, 100, opaco);
+    defer d.destruir();
+    try d.adicionar(.texto, origem);
+    d.atual().modelo.texto.trocar("Oi");
+    try d.atual().gerar();
+    try testing.expectEqual(@as(u16, 2 * 8 * 3), d.atual().pixels.largura);
 }
