@@ -80,7 +80,91 @@ pub const Tela = struct {
             }
         }
     }
+
+    /// Pixel (x, y), grudando na borda se cair fora.
+    fn pegar(t: *const Tela, x: i32, y: i32) Cor {
+        const cx: usize = @intCast(std.math.clamp(x, 0, @as(i32, t.largura) - 1));
+        const cy: usize = @intCast(std.math.clamp(y, 0, @as(i32, t.altura) - 1));
+        return t.pixels[cy * t.largura + cx];
+    }
+
+    /// Cor na posição (u, v) em unidades de pixel, que quase sempre cai entre
+    /// pixels: mistura os 4 vizinhos pelo quanto (u, v) está perto de cada um
+    /// (interpolação bilinear). Fora da imagem devolve null.
+    pub fn amostrar(t: *const Tela, u: f32, v: f32) ?Cor {
+        const lw: f32 = @floatFromInt(t.largura);
+        const lh: f32 = @floatFromInt(t.altura);
+        if (!(u >= -0.5 and v >= -0.5 and u < lw - 0.5 and v < lh - 0.5)) return null;
+        const base_u = @floor(u);
+        const base_v = @floor(v);
+        const fx = u - base_u;
+        const fy = v - base_v;
+        const x: i32 = @intFromFloat(base_u);
+        const y: i32 = @intFromFloat(base_v);
+        const a = t.pegar(x, y);
+        const b = t.pegar(x + 1, y);
+        const c = t.pegar(x, y + 1);
+        const d = t.pegar(x + 1, y + 1);
+        var cor: Cor = 0;
+        inline for (.{ 16, 8, 0 }) |s| {
+            const ca: f32 = @floatFromInt((a >> s) & 0xff);
+            const cb: f32 = @floatFromInt((b >> s) & 0xff);
+            const cc: f32 = @floatFromInt((c >> s) & 0xff);
+            const cd: f32 = @floatFromInt((d >> s) & 0xff);
+            const em_cima = ca + (cb - ca) * fx;
+            const em_baixo = cc + (cd - cc) * fx;
+            const canal = em_cima + (em_baixo - em_cima) * fy;
+            cor |= @as(Cor, @intFromFloat(@round(canal))) << s;
+        }
+        return cor;
+    }
+
+    /// Pinta `origem` nesta tela transformada por uma matriz, recebendo a
+    /// INVERSA dela. Mapeamento inverso: pra cada pixel daqui pergunta "de
+    /// onde você veio lá?". No sentido direto (levar cada pixel de lá pra cá)
+    /// sobram buracos quando a imagem gira ou aumenta.
+    pub fn desenharTransformada(t: *Tela, origem: *const Tela, inversa: Mat3, fundo: Cor) void {
+        for (0..t.altura) |y| {
+            const fy: f32 = @floatFromInt(y);
+            for (0..t.largura) |x| {
+                const fx: f32 = @floatFromInt(x);
+                // +0.5: o centro do pixel; -0.5 volta pra índice do outro lado.
+                const p = inversa.aplicar(fx + 0.5, fy + 0.5);
+                t.pixels[y * t.largura + x] = origem.amostrar(p.x - 0.5, p.y - 0.5) orelse fundo;
+            }
+        }
+    }
 };
+
+const Mat3 = @import("mat3.zig").Mat3;
+
+test "transformação identidade copia a imagem igualzinha" {
+    var origem = try Tela.criar(std.testing.allocator, 5, 4, 0);
+    defer origem.destruir();
+    for (origem.pixels, 0..) |*p, i| p.* = @intCast(i * 0x030201);
+    var destino = try Tela.criar(std.testing.allocator, 5, 4, 0);
+    defer destino.destruir();
+    destino.desenharTransformada(&origem, Mat3.identidade, 0xabcdef);
+    try std.testing.expectEqualSlices(Cor, origem.pixels, destino.pixels);
+}
+
+test "bilinear no meio de dois pixels dá a média" {
+    var t = try Tela.criar(std.testing.allocator, 2, 1, 0);
+    defer t.destruir();
+    t.pixels[0] = 0x000000;
+    t.pixels[1] = 0xc86420;
+    try std.testing.expectEqual(@as(?Cor, 0x643210), t.amostrar(0.5, 0));
+    try std.testing.expectEqual(@as(?Cor, null), t.amostrar(5, 0));
+}
+
+test "dobrar o tamanho cobre a tela toda sem buracos" {
+    var origem = try Tela.criar(std.testing.allocator, 4, 4, 0x111111);
+    defer origem.destruir();
+    var destino = try Tela.criar(std.testing.allocator, 8, 8, 0);
+    defer destino.destruir();
+    destino.desenharTransformada(&origem, Mat3.escala(2, 2).inversa().?, 0xff0000);
+    for (destino.pixels) |p| try std.testing.expectEqual(@as(Cor, 0x111111), p);
+}
 
 test "linha pinta as duas pontas e nada longe dela" {
     var t = try Tela.criar(std.testing.allocator, 20, 10, 0);
