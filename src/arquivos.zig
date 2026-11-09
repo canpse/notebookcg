@@ -1,5 +1,6 @@
-//! Lista as imagens (.ppm, .pgm) de uma pasta e das subpastas, pra escolher
-//! dentro da janela (o editor não tem diálogo de arquivo do sistema).
+//! Lista os arquivos de certas extensões (.ppm e .pgm, ou .quadro) de uma
+//! pasta e das subpastas, pra escolher dentro da janela (o editor não tem
+//! diálogo de arquivo do sistema).
 const std = @import("std");
 const Io = std.Io;
 
@@ -17,17 +18,21 @@ pub const Lista = struct {
     }
 };
 
-fn ehImagem(nome: []const u8) bool {
+pub const imagens = [_][]const u8{ ".ppm", ".pgm" };
+pub const quadros = [_][]const u8{".quadro"};
+
+fn combina(nome: []const u8, extensoes: []const []const u8) bool {
     const ext = std.fs.path.extension(nome);
-    return std.ascii.eqlIgnoreCase(ext, ".ppm") or std.ascii.eqlIgnoreCase(ext, ".pgm");
+    for (extensoes) |e| if (std.ascii.eqlIgnoreCase(ext, e)) return true;
+    return false;
 }
 
-pub fn listar(gpa: std.mem.Allocator, io: Io, pasta: []const u8) !Lista {
+pub fn listar(gpa: std.mem.Allocator, io: Io, pasta: []const u8, extensoes: []const []const u8) !Lista {
     var l: Lista = .{ .gpa = gpa };
     errdefer l.deinit();
     var dir = try Io.Dir.cwd().openDir(io, pasta, .{ .iterate = true });
     defer dir.close(io);
-    try varrer(&l, io, dir, "", 0);
+    try varrer(&l, io, dir, "", 0, extensoes);
     std.mem.sort([]u8, l.nomes.items, {}, struct {
         fn menor(_: void, a: []u8, b: []u8) bool {
             return std.mem.lessThan(u8, a, b);
@@ -36,7 +41,7 @@ pub fn listar(gpa: std.mem.Allocator, io: Io, pasta: []const u8) !Lista {
     return l;
 }
 
-fn varrer(l: *Lista, io: Io, dir: Io.Dir, prefixo: []const u8, nivel: usize) !void {
+fn varrer(l: *Lista, io: Io, dir: Io.Dir, prefixo: []const u8, nivel: usize, extensoes: []const []const u8) !void {
     var it = dir.iterate();
     while (try it.next(io)) |e| {
         if (l.nomes.items.len >= max_arquivos) return;
@@ -46,7 +51,7 @@ fn varrer(l: *Lista, io: Io, dir: Io.Dir, prefixo: []const u8, nivel: usize) !vo
         else
             try std.fs.path.join(l.gpa, &.{ prefixo, e.name });
         switch (e.kind) {
-            .file => if (ehImagem(e.name)) {
+            .file => if (combina(e.name, extensoes)) {
                 try l.nomes.append(l.gpa, caminho);
                 continue;
             },
@@ -54,7 +59,7 @@ fn varrer(l: *Lista, io: Io, dir: Io.Dir, prefixo: []const u8, nivel: usize) !vo
                 defer l.gpa.free(caminho);
                 var sub = dir.openDir(io, e.name, .{ .iterate = true }) catch continue;
                 defer sub.close(io);
-                try varrer(l, io, sub, caminho, nivel + 1);
+                try varrer(l, io, sub, caminho, nivel + 1, extensoes);
                 continue;
             },
             else => {},
@@ -74,7 +79,7 @@ test "acha imagens em subpastas e ignora o resto" {
 
     var base: [std.fs.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.realPath(io, &base);
-    var l = try listar(std.testing.allocator, io, base[0..n]);
+    var l = try listar(std.testing.allocator, io, base[0..n], &imagens);
     defer l.deinit();
     try std.testing.expectEqual(@as(usize, 2), l.nomes.items.len);
     try std.testing.expectEqualStrings("a.ppm", l.nomes.items[0]);

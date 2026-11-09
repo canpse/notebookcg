@@ -14,8 +14,10 @@ pub const Evento = union(enum) {
     redimensionar: struct { largura: u16, altura: u16 },
     /// `codigo` é a posição física da tecla, não a letra (pra letra, ver
     /// `Janela.simbolo`). `estado` tem os modificadores: 1 shift, 2 caps lock.
+    /// `estado` tem os modificadores: 1 shift, 2 caps lock, 4 ctrl.
     tecla: struct { codigo: u8, apertou: bool, estado: u16 = 0 },
-    botao: struct { numero: u8, apertou: bool, x: i16, y: i16 },
+    /// `tempo` em milissegundos (do servidor): serve pro clique duplo.
+    botao: struct { numero: u8, apertou: bool, x: i16, y: i16, estado: u16 = 0, tempo: u32 = 0 },
     movimento: struct { x: i16, y: i16 },
 };
 
@@ -27,6 +29,9 @@ const op_mudar_propriedade = 18;
 const op_criar_gc = 55;
 const op_mapa_teclado = 101;
 const op_enviar_imagem = 72;
+const op_dono_selecao = 22;
+const op_enviar_evento = 25;
+const op_consultar_extensao = 98;
 
 const atomo_atom = 4;
 const atomo_string = 31;
@@ -47,8 +52,18 @@ pub const Janela = struct {
     profundidade: u8,
     /// Maior requisição que o servidor aceita, em bytes.
     max_requisicao: usize,
+    /// Com BIG-REQUESTS (0 = sem a extensão).
+    max_grande: usize = 0,
     atomo_protocolos: u32,
     atomo_fechar: u32,
+    /// Área de transferência: o PNG que a gente oferece (e é dono).
+    atomo_clipboard: u32 = 0,
+    atomo_targets: u32 = 0,
+    atomo_png: u32 = 0,
+    copiado: ?[]u8 = null,
+    gpa: std.mem.Allocator,
+    /// Hora (do servidor) do último evento de tecla ou mouse.
+    ultimo_tempo: u32 = 0,
     entrada: [4096]u8 = undefined,
     n_entrada: usize = 0,
     /// Pra cada tecla física, o símbolo sem e com shift (keysym do X11),
@@ -107,9 +122,14 @@ pub const Janela = struct {
             .max_requisicao = @as(usize, ler16(resto, 18)) * 4,
             .atomo_protocolos = 0,
             .atomo_fechar = 0,
+            .gpa = gpa,
         };
         j.atomo_protocolos = try j.internarAtomo("WM_PROTOCOLS");
         j.atomo_fechar = try j.internarAtomo("WM_DELETE_WINDOW");
+        j.atomo_clipboard = try j.internarAtomo("CLIPBOARD");
+        j.atomo_targets = try j.internarAtomo("TARGETS");
+        j.atomo_png = try j.internarAtomo("image/png");
+        try j.ligarRequisicoesGrandes();
         try j.lerMapaTeclado(gpa, resto[26], resto[27]);
 
         // 3. Cria a janela (ainda invisível), filha da raiz.
@@ -159,7 +179,90 @@ pub const Janela = struct {
     }
 
     pub fn fechar(j: *Janela) void {
+        if (j.copiado) |c| j.gpa.free(c);
         _ = linux.close(j.fd);
+    }
+
+    /// Requisição comum tem no máximo 256 KB; um PNG copiado passa disso.
+    /// A extensão BIG-REQUESTS libera requisições de até ~16 MB: a requisição
+    /// vem com 0 no tamanho e o tamanho de verdade em 4 bytes logo depois.
+    fn ligarRequisicoesGrandes(j: *Janela) !void {
+        const nome = "BIG-REQUESTS";
+        var p: Pacote = .{};
+        p.c8(op_consultar_extensao);
+        p.c8(0);
+        p.c16(@intCast(2 + alinhar4(nome.len) / 4));
+        p.c16(nome.len);
+        p.c16(0);
+        p.texto(nome);
+        try escreverTudo(j.fd, p.bytes());
+        var r: [32]u8 = undefined;
+        try lerTudo(j.fd, &r);
+        if (r[0] != 1 or r[8] == 0) return; // sem a extensão: fica no limite normal
+        p = .{};
+        p.c8(r[9]); // o número que o servidor deu à extensão
+        p.c8(0); // BigReqEnable
+        p.c16(1);
+        try escreverTudo(j.fd, p.bytes());
+        try lerTudo(j.fd, &r);
+        if (r[0] != 1) return;
+        j.max_grande = @as(usize, ler32(&r, 8)) * 4;
+    }
+
+    /// Põe o PNG na área de transferência: a gente vira DONO do CLIPBOARD e,
+    /// quando outro programa colar, ele pede e a gente manda (`atenderPedido`).
+    /// No X nada é copiado na hora: o dado fica com quem copiou.
+    pub fn copiar(j: *Janela, png: []const u8) !void {
+        const novo = try j.gpa.dupe(u8, png);
+        if (j.copiado) |c| j.gpa.free(c);
+        j.copiado = novo;
+        var p: Pacote = .{};
+        p.c8(op_dono_selecao);
+        p.c8(0);
+        p.c16(4);
+        p.c32(j.id);
+        p.c32(j.atomo_clipboard);
+        p.c32(0); // CurrentTime, como o xclip faz
+        try escreverTudo(j.fd, p.bytes());
+    }
+
+    /// Outro programa quer colar (SelectionRequest). Ele diz o formato
+    /// (`alvo`) e em que propriedade da janela dele quer receber; a gente
+    /// escreve lá e avisa com um SelectionNotify.
+    fn atenderPedido(j: *Janela, b: *const [32]u8) void {
+        const quem = ler32(b, 12);
+        const selecao = ler32(b, 16);
+        const alvo = ler32(b, 20);
+        var propriedade = ler32(b, 24);
+        if (propriedade == 0) propriedade = alvo; // clientes antigos
+        var ok = false;
+        if (selecao == j.atomo_clipboard) if (j.copiado) |png| {
+            if (alvo == j.atomo_targets) {
+                var lista: [8]u8 = undefined;
+                std.mem.writeInt(u32, lista[0..4], j.atomo_targets, .little);
+                std.mem.writeInt(u32, lista[4..8], j.atomo_png, .little);
+                ok = if (j.mudarPropriedadeEm(quem, propriedade, atomo_atom, 32, &lista)) true else |_| false;
+            } else if (alvo == j.atomo_png) {
+                ok = if (j.mudarPropriedadeEm(quem, propriedade, j.atomo_png, 8, png)) true else |_| false;
+            }
+        };
+        var p: Pacote = .{};
+        p.c8(op_enviar_evento);
+        p.c8(0); // não propagar
+        p.c16(11);
+        p.c32(quem);
+        p.c32(0); // máscara: nenhuma, vai direto pra quem pediu
+        // O evento SelectionNotify, 32 bytes.
+        p.c8(31);
+        p.c8(0);
+        p.c16(0);
+        p.c32(ler32(b, 4)); // hora do pedido
+        p.c32(quem);
+        p.c32(selecao);
+        p.c32(alvo);
+        p.c32(if (ok) propriedade else 0);
+        while (p.n < 44) p.c8(0);
+        escreverTudo(j.fd, p.bytes()) catch {};
     }
 
     /// Copia os pixels pra janela. `pixels` tem `largura * altura` cores 0x00RRGGBB.
@@ -197,6 +300,18 @@ pub const Janela = struct {
                 const bruto = j.entrada[0..32].*;
                 std.mem.copyForwards(u8, j.entrada[0 .. j.n_entrada - 32], j.entrada[32..j.n_entrada]);
                 j.n_entrada -= 32;
+                const tipo = bruto[0] & 0x7f;
+                if (tipo == 2 or tipo == 3 or tipo == 4 or tipo == 5) j.ultimo_tempo = ler32(&bruto, 4);
+                if (tipo == 30) {
+                    j.atenderPedido(&bruto);
+                    continue;
+                }
+                // SelectionClear: outro programa copiou algo; o nosso já não vale.
+                if (tipo == 29) {
+                    if (j.copiado) |c| j.gpa.free(c);
+                    j.copiado = null;
+                    continue;
+                }
                 if (j.traduzir(&bruto)) |ev| return ev;
             }
             if (!bloquear) {
@@ -224,7 +339,7 @@ pub const Janela = struct {
                 return null;
             },
             2, 3 => .{ .tecla = .{ .codigo = b[1], .apertou = tipo == 2, .estado = ler16(b, 28) } },
-            4, 5 => .{ .botao = .{ .numero = b[1], .apertou = tipo == 4, .x = lerI16(b, 24), .y = lerI16(b, 26) } },
+            4, 5 => .{ .botao = .{ .numero = b[1], .apertou = tipo == 4, .x = lerI16(b, 24), .y = lerI16(b, 26), .estado = ler16(b, 28), .tempo = ler32(b, 4) } },
             6 => .{ .movimento = .{ .x = lerI16(b, 24), .y = lerI16(b, 26) } },
             // Uma exposição pode vir em vários pedaços; basta redesenhar no último.
             12 => if (ler16(b, 16) == 0) .expor else null,
@@ -290,19 +405,34 @@ pub const Janela = struct {
     }
 
     fn mudarPropriedade(j: *Janela, propriedade: u32, tipo: u32, bits: u8, dados: []const u8) !void {
+        return j.mudarPropriedadeEm(j.id, propriedade, tipo, bits, dados);
+    }
+
+    /// ChangeProperty numa janela qualquer (na de quem pediu pra colar, por
+    /// exemplo). Dado grande vai como requisição grande (BIG-REQUESTS).
+    fn mudarPropriedadeEm(j: *Janela, janela: u32, propriedade: u32, tipo: u32, bits: u8, dados: []const u8) !void {
+        const palavras = 6 + alinhar4(dados.len) / 4;
         var p: Pacote = .{};
         p.c8(op_mudar_propriedade);
         p.c8(0); // substituir
-        p.c16(@intCast(6 + alinhar4(dados.len) / 4));
-        p.c32(j.id);
+        if (palavras * 4 <= j.max_requisicao) {
+            p.c16(@intCast(palavras));
+        } else {
+            if (palavras * 4 + 4 > j.max_grande) return error.GrandeDemais;
+            p.c16(0);
+            p.c32(@intCast(palavras + 1));
+        }
+        p.c32(janela);
         p.c32(propriedade);
         p.c32(tipo);
         p.c8(bits);
         p.c8(0);
         p.c16(0);
         p.c32(@intCast(dados.len / (bits / 8)));
-        p.texto(dados);
         try escreverTudo(j.fd, p.bytes());
+        try escreverTudo(j.fd, dados);
+        const zeros = [_]u8{0} ** 4;
+        try escreverTudo(j.fd, zeros[0 .. alinhar4(dados.len) - dados.len]);
     }
 };
 

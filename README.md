@@ -1,53 +1,102 @@
 # editor-cg
 
-Editor de texto e imagens feito do zero em Zig, sem nenhuma biblioteca:
-trabalho de Computação Gráfica (IFC, 2026.2).
+Um quadro infinito pra rabiscar rápido, onde **qualquer pedaço vira imagem
+num gesto**: você arrasta a ferramenta Recorte sobre uma região e ela já
+está na área de transferência (Ctrl+V em qualquer programa) e salva em PNG.
 
-"Do zero" aqui quer dizer que o programa abre a própria janela falando o
-protocolo do X11 pelo socket e pinta cada pixel num vetor na memória.
+É diferente de uma ferramenta de captura de tela: o recorte não é uma foto do
+que aparece, ele é **gerado de novo a partir do modelo** (os pontos do traço,
+o tamanho do retângulo, o texto), na escala que você escolher (1× a 4×). Por
+isso sai nítido, sem menu nem alça por cima, e a região fica marcada no
+quadro como moldura: mexeu no desenho, recorta de novo com um clique.
 
-    zig build run                 # abre o editor
-    zig build run -- ~/fotos      # pasta onde o "+ Imagem" procura .ppm/.pgm
-    zig build test    # roda os testes
+Feito do zero em Zig, sem nenhuma biblioteca: trabalho de Computação
+Gráfica (IFC, 2026.2). A janela fala o protocolo do X11 pelo socket, cada
+pixel é pintado num vetor na memória, e até o PNG (com o compressor deflate)
+é escrito aqui.
 
-Precisa de Zig 0.16 e de um servidor X (no Wayland, o XWayland serve).
+    zig build run                      # abre o editor (pasta atual)
+    zig build run -- ~/desenhos        # pasta dos recortes, quadros e imagens
+    zig build run -- aula.quadro       # abre um quadro salvo
+    zig build test                     # roda os testes
+
+Precisa de Zig 0.16 e de um servidor X (no Wayland, o XWayland serve, e o
+recorte copiado aparece pros programas Wayland também).
+
+![formas](docs/prints/quadro-formas-2026-11-09.png)
 
 ## Como usar
 
-Tudo que entra no documento começa escolhendo o **modelo** na barra de cima:
-Desenho, Retângulo, Elipse, Texto ou Imagem (PPM/PGM, P2/P3/P5/P6, escolhida
-numa lista dentro da janela com os arquivos da pasta e subpastas; imagem
-grande entra reduzida pela matriz, sem perder pixel). Cada camada é um objeto:
-o modelo (tipo + parâmetros) gera os pixels dela, e uma matriz própria diz
-onde ela fica na folha. Mover, girar e escalar mudam só a matriz.
+Ferramentas na barra de cima, cada uma com a sua tecla (como no Excalidraw):
 
-- barra de cima: `+ Modelo` cria o objeto no meio da tela; `Pincel` / `Mover` trocam o modo
-- `Salvar PPM`: grava a folha inteira (sem menus, alças nem zoom da tela) em P3 na pasta das imagens, como `editor-1.ppm`, `editor-2.ppm`...
-- painel da direita: as camadas de cima pra baixo; clicar seleciona; `Subir`, `Descer`, `Apagar`
-- **cor**: a paleta no painel troca a cor do objeto selecionado (num desenho, a cor do pincel)
-- **texto**: um texto novo já nasce digitando (a primeira letra troca o "Texto" padrão); depois, clicar no campo TEXTO ou `Enter` volta a editar; `Enter`/`Esc` termina. Acentos pelo layout do sistema, com tecla morta (´ + a = á)
-- modo **Pincel** (`b`): arrastar desenha; se a selecionada não for um desenho, cria um por cima
-- modo **Mover** (`v`): clicar seleciona o objeto de cima que tem tinta ali; arrastar move. No selecionado aparecem as **alças**: cantos escalam mantendo a proporção (canto oposto parado), o meio dos lados estica só naquela direção (ao longo do objeto, mesmo girado), a bolinha de cima gira em torno do centro (`Shift`: de 15 em 15°). O fundo é travado (clicar no papel vazio não arrasta a folha)
-- atalhos que fazem o mesmo: `q` / `e` gira 15°; `-` / `=` diminui / aumenta; `r` desfaz giro e escala (fica no lugar)
-- `n`: desenho novo; `Tab`: próxima camada; `Page Up` / `Page Down`: sobe / desce; `Delete`: apaga; `c`: limpa o desenho
-- rodinha: zoom da vista em torno do cursor; botão direito arrastando: move a vista; `Shift+q/e`: gira a vista; `0`: vista inicial
-- `Esc`: sai
+| Tecla | Ferramenta | |
+|---|---|---|
+| `V` | Seleção | clique seleciona, `Shift` soma; arrastar no vazio seleciona uma área; dois cliques no vazio criam texto, num texto editam |
+| `P` | Pincel | cada traço é um objeto, suavizado ao soltar |
+| `L` / `A` | Linha / Seta | da ponta à ponta; `Shift` prende de 15 em 15° |
+| `R` / `O` | Retângulo / Elipse | arraste o tamanho; `Shift` faz quadrado / círculo |
+| `T` | Texto | clique e digite (acentos pelo layout do sistema); `Enter` termina |
+| `E` | Borracha | apaga o objeto que o mouse tocar |
+| `C` | Recorte | arraste a região: vira moldura, PNG copiado e salvo como `recorte-N.png` |
+| `I` | Imagem | abre um PPM/PGM da pasta (lista dentro da janela) |
+
+- **painel da direita**: cor, fundo (retângulo e elipse), espessura, traço
+  liso ou **à mão**, tamanho do texto. Com algo selecionado, muda o
+  selecionado; sem nada, muda como a ferramenta vai criar
+- **moldura selecionada**: escala do recorte (1× a 4×), `Copiar PNG` (ou
+  `Enter`) e `Salvar PPM`
+- **alças** na seleção: cantos escalam com proporção (`Shift`: livre), o meio
+  dos lados estica, a bolinha gira (`Shift`: de 15 em 15°). Com vários
+  selecionados, a caixa é a de todos e transforma todos juntos
+- `Ctrl+Z` / `Ctrl+Y` (ou `Ctrl+Shift+Z`): desfazer / refazer
+- `Ctrl+C`: copia a seleção como imagem (só ela, sem o que está em volta)
+- `Ctrl+D`: duplica; `Ctrl+A`: seleciona tudo; `Ctrl+G` / `Ctrl+Shift+G`: agrupa / desagrupa
+- `Delete`: apaga; `Page Up` / `Page Down`: sobe / desce na pilha; setas: empurram 1 (`Shift`: 10)
+- `Ctrl+S`: salva o quadro (`quadro-N.quadro` na pasta, ou o que estiver aberto); `Ctrl+O` / `Abrir`: abre
+- vista: rodinha dá zoom em torno do cursor; botão direito, do meio ou
+  `espaço` + arrastar andam; `Shift+Q` / `Shift+E` giram; `0` volta pra 100%;
+  `1` enquadra tudo; `-` / `=` zoom
 
 O `zig build run` compila em ReleaseFast (em Debug o redesenho engasga);
 `-Doptimize=Debug` se precisar depurar.
 
+## A computação gráfica por trás
+
+- **modelo → imagem**: nada é guardado em pixels, a não ser as fotos
+  importadas e o texto (a fonte é bitmap). Traço é uma lista de pontos,
+  retângulo é largura × altura. Cada quadro é pintado de novo a partir disso,
+  na resolução da tela ou do recorte
+- **coordenadas homogêneas**: cada objeto tem uma matriz 3×3 (objeto → mundo);
+  a vista é outra (mundo → tela). Arrastar na tela com a vista girada e com
+  zoom: `nova = vista⁻¹ · g · vista · antiga`
+- **recorte**: `mundo → imagem = S(escala) · região⁻¹`, a mesma pintura com
+  outra matriz
+- **traço suave (antialiasing)**: a cobertura de cada pixel vem da distância
+  do centro dele ao segmento; uma máscara guarda o máximo, pra borda não
+  escurecer onde os segmentos se sobrepõem
+- **retângulo e elipse por mapeamento inverso** com **função de distância com
+  sinal**: dentro, borda e "perto da borda" (pro clique) são uma conta só
+- **suavização de Chaikin** no pincel (cortar cantos converge pra uma
+  B-spline quadrática)
+- **estilo à mão**: duas passadas tortas por *value noise* com semente fixa
+- **algoritmo do pintor**, composição "por cima" com alfa pré-multiplicado,
+  interpolação bilinear nas imagens, Bresenham nas linhas da interface
+- **descarte**: objeto cuja caixa cai fora da tela nem é pintado
+
 ## Onde está cada coisa
 
-- `src/x11.zig`: a janela (conexão, eventos, envio dos pixels, tabela do teclado)
-- `src/tela.zig`: o vetor de pixels e os desenhos básicos (ponto, disco, linha de Bresenham)
-- `src/mat3.zig`: matriz 3×3 em coordenadas homogêneas (translação, escala, rotação, composição em torno de um ponto, inversa)
-- `src/tela.zig`: também a amostragem bilinear com alfa pré-multiplicado e a composição "por cima" por mapeamento inverso
-- `src/camada.zig`: modelos (desenho, retângulo, elipse, texto) e `gerar` (modelo → pixels); camadas e documento: seleção por clique (inversa de vista·camada), transformar em coordenadas da janela (`vista⁻¹·g·vista·camada`), pintar de baixo pra cima (algoritmo do pintor) e contorno
-- `src/fonte.zig`: texto com fonte bitmap 8×16 (carimba a grade de bits de cada letra; lê UTF-8)
-- `src/fonte_dados.zig`: os glifos (ASCII + Latin-1), gerados por `ferramentas/fonte_psf.py` a partir da fonte de console `eurlatgr` do pacote kbd do Linux (GPL)
+- `src/x11.zig`: a janela (conexão, eventos, envio dos pixels, tabela do teclado) e a área de transferência (dono do CLIPBOARD, responde TARGETS e image/png; BIG-REQUESTS pra imagem grande)
+- `src/tela.zig`: o vetor de pixels; ponto, disco, Bresenham, traço suave com máscara, tracejado, bilinear e composição por mapeamento inverso
+- `src/mat3.zig`: matriz 3×3 em coordenadas homogêneas (translação, escala, rotação, composição em torno de um ponto, inversa, fator de escala)
+- `src/camada.zig`: os modelos (traço, linha, seta, retângulo, elipse, texto, imagem, moldura), como cada um se pinta e responde ao clique, estilo à mão, Chaikin; o documento: seleção, grupos, pilha, arrasto, desfazer/refazer (fotos do quadro) e o recorte
+- `src/alcas.zig`: alças (referencial da caixa `m`; o arrasto vira `m · g · m⁻¹` na tela)
+- `src/png.zig`: gravação de PNG com filtros por linha (Sub, Up, Paeth) e deflate próprio (LZ77 com cadeia de hash + Huffman fixo)
+- `src/quadro.zig`: o arquivo `.quadro` (o modelo em texto)
 - `src/ppm.zig`: leitura de PPM/PGM em texto e binário; gravação em P3
-- `src/arquivos.zig`: lista de imagens da pasta (pra escolher dentro da janela)
-- `src/digitar.zig`: de tecla a letra (keysym → Unicode, tecla morta + letra = letra acentuada)
-- `src/alcas.zig`: alças de transformação (escala na coordenada da camada: `matriz·T(âncora)·S·T(−âncora)`; giro na janela em torno do centro)
-- `src/ui.zig`: menus dentro da janela (barra, painel de camadas, rodapé); o mesmo layout desenha e responde ao clique
-- `src/main.zig`: o laço principal (teclas, mouse, modos)
+- `src/fonte.zig` e `src/fonte_dados.zig`: fonte bitmap 8×16 (ASCII + Latin-1), gerada por `ferramentas/fonte_psf.py` da fonte de console `eurlatgr` do kbd (GPL)
+- `src/digitar.zig`: de tecla a letra (keysym → Unicode, tecla morta + letra)
+- `src/arquivos.zig`: lista de arquivos da pasta (pra escolher dentro da janela)
+- `src/ui.zig`: barra de ferramentas, painel de propriedades e camadas, rodapé, lista de arquivos; o mesmo layout desenha e responde ao clique
+- `src/main.zig`: o editor (ferramentas, gestos do mouse, atalhos, recorte, arquivos)
+
+![recorte](docs/prints/quadro-moldura-2026-11-09.png)

@@ -69,6 +69,15 @@ pub const Mat3 = struct {
         return translacao(cx, cy).vezes(t).vezes(translacao(-cx, -cy));
     }
 
+    /// Quanto a matriz aumenta as distâncias, em média: a raiz do quanto ela
+    /// aumenta as áreas (o determinante da parte 2×2). Numa matriz só de
+    /// giro, translação e escala uniforme s, dá exatamente s. É o que diz a
+    /// grossura de um traço depois de transformado.
+    pub fn fator(t: Mat3) f32 {
+        const m = t.m;
+        return @sqrt(@abs(m[0][0] * m[1][1] - m[0][1] * m[1][0]));
+    }
+
     pub fn aplicar(t: Mat3, x: f32, y: f32) Ponto {
         const m = t.m;
         // Em transformações afins w é sempre 1; dividir deixa a função
