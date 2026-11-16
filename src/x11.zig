@@ -330,6 +330,15 @@ pub const Janela = struct {
         }
     }
 
+    /// Espera até `ms` milissegundos por um evento. true = tem evento pra
+    /// ler (com `proximo`); false = o tempo acabou (hora do próximo quadro
+    /// de uma animação).
+    pub fn esperar(j: *Janela, ms: i32) bool {
+        if (j.n_entrada >= 32) return true;
+        var espera = [1]linux.pollfd{.{ .fd = j.fd, .events = linux.POLL.IN, .revents = 0 }};
+        return linux.poll(&espera, 1, ms) == 1;
+    }
+
     fn traduzir(j: *const Janela, b: *const [32]u8) ?Evento {
         // O bit mais alto só diz que o evento foi enviado por outro programa.
         const tipo = b[0] & 0x7f;
