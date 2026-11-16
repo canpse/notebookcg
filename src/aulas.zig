@@ -1892,6 +1892,8 @@ pub fn main(init: std.process.Init) !void {
         if (init.environ_map.get("CG_TEMPO")) |t| app.an.t = std.fmt.parseFloat(f32, t) catch 0;
         if (init.environ_map.get("CG_TECLAS")) |ts| for (ts) |c| app.naAula("tecla", .{@as(u32, c)});
         try app.pintar();
+        try app.pintar();
+        std.debug.print("aula {d}: {d:.2} ms por quadro\n", .{ app.aula + 1, app.quadro_ms });
         const w: usize = app.tela.largura;
         const h: usize = app.tela.altura;
         var cab: [32]u8 = undefined;

@@ -1,4 +1,38 @@
-# editor-cg
+# CG Interativa
+
+Software educacional de Computação Gráfica: **9 aulas interativas**, uma
+por tópico da ementa (IFC, 2026.2). Em cada aula você mexe na cena com o
+mouse e o teclado, e o painel da direita mostra, ao vivo, os números por
+trás da imagem (matrizes, códigos de região, profundidade, a conta da luz).
+
+    zig build run          # abre na aula 1
+    zig build run -- 7     # abre direto na aula 7
+    zig build test         # testes
+
+| | Aula | Mostra |
+|---|---|---|
+| 1 | Framebuffer e pixels | matriz de pixels, índice y·largura+x, RGB, tamanho real |
+| 2 | Rasterização de retas | DDA, Bresenham (tabela do erro), antialiasing |
+| 3 | Transformações 2D | S, R, T e M = T·R·S ao vivo; ordem; giro no centro |
+| 4 | Janela -> viewport | mundo x tela, sx/sy, distorção |
+| 5 | Recorte de retas | Cohen-Sutherland com códigos de 4 bits e passos |
+| 6 | Projeção 3D | pipeline de um vértice (mundo, câmera, clip, /w, tela), perspectiva x ortográfica, vista de cima |
+| 7 | Superfícies ocultas | sem remoção, faces de trás, pintor, z-buffer (e ver o z-buffer) |
+| 8 | Iluminação e shading | Phong: flat, Gouraud, Phong; a conta no pixel do mouse |
+| 9 | Animação | grafo de cena Sol-Terra-Lua, quadros-chave e curvas de tempo |
+
+Tudo sem biblioteca gráfica: a janela fala o protocolo do X11 pelo socket,
+cada pixel é escrito num vetor na memória e o 3D tem rasterizador de
+triângulos com z-buffer próprio (`src/tres_d.zig`). Aulas em `src/aulas.zig`.
+Prints em `docs/prints/aulas/`. Pra gerar prints sem mexer no mouse:
+`CG_PRINT=saida.ppm CG_MOUSE=x,y CG_TECLAS=mm zig-out/bin/cg-interativa N`.
+
+O quadro de desenho que veio antes (mesma base) continua: `zig build editor`.
+O resto deste arquivo é sobre ele.
+
+---
+
+# Quadro de desenho (editor-cg)
 
 Um quadro infinito pra rabiscar rápido, onde **qualquer pedaço vira imagem
 num gesto**: você arrasta a ferramenta Recorte sobre uma região e ela já
