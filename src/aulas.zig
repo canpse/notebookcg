@@ -43,17 +43,30 @@ pub const cores = struct {
 const largura_lateral = 230;
 const largura_painel = 420;
 
-const titulos = [_][]const u8{
-    "Framebuffer e pixels",
-    "Rasterização de retas",
-    "Transformações 2D",
-    "Janela -> viewport",
-    "Recorte de retas",
-    "Projeção 3D",
-    "Superfícies ocultas",
-    "Iluminação e shading",
-    "Animação",
+/// Idioma da interface: português ou inglês. Troca com F2 ou no botão da
+/// barra lateral; começa pelo $LANG do sistema.
+pub var ingles = false;
+
+/// O texto no idioma atual.
+pub fn T(comptime pt: []const u8, comptime en: []const u8) []const u8 {
+    return if (ingles) en else pt;
+}
+
+const titulos = [_][2][]const u8{
+    .{ "Framebuffer e pixels", "Framebuffer and pixels" },
+    .{ "Rasterização de retas", "Line rasterization" },
+    .{ "Transformações 2D", "2D transformations" },
+    .{ "Janela -> viewport", "Window -> viewport" },
+    .{ "Recorte de retas", "Line clipping" },
+    .{ "Projeção 3D", "3D projection" },
+    .{ "Superfícies ocultas", "Hidden surfaces" },
+    .{ "Iluminação e shading", "Lighting and shading" },
+    .{ "Animação", "Animation" },
 };
+
+fn tituloAula(i: usize) []const u8 {
+    return titulos[i][@intFromBool(ingles)];
+}
 
 // ---------------------------------------------------------------------------
 // Painel de texto da direita
@@ -74,17 +87,24 @@ pub const Painel = struct {
         p.n += s.len;
         p.nl += 1;
     }
-    pub fn titulo(p: *Painel, comptime s: []const u8) void {
-        p.add(.titulo, cores.destaque, s, .{});
+    /// O mesmo, com um formato pra cada idioma.
+    pub fn add2(p: *Painel, tipo: Tipo, cor: Cor, comptime pt: []const u8, comptime en: []const u8, args: anytype) void {
+        if (ingles) p.add(tipo, cor, en, args) else p.add(tipo, cor, pt, args);
     }
-    pub fn txt(p: *Painel, comptime s: []const u8) void {
-        p.add(.texto, cores.texto, s, .{});
+    pub fn titulo(p: *Painel, s: []const u8) void {
+        p.add(.titulo, cores.destaque, "{s}", .{s});
     }
-    pub fn ctl(p: *Painel, comptime s: []const u8) void {
-        p.add(.mono, cores.fraco, s, .{});
+    pub fn txt(p: *Painel, s: []const u8) void {
+        p.add(.texto, cores.texto, "{s}", .{s});
+    }
+    pub fn ctl(p: *Painel, s: []const u8) void {
+        p.add(.mono, cores.fraco, "{s}", .{s});
     }
     pub fn val(p: *Painel, comptime fmt: []const u8, args: anytype) void {
         p.add(.mono, cores.valor, fmt, args);
+    }
+    pub fn v2(p: *Painel, comptime pt: []const u8, comptime en: []const u8, args: anytype) void {
+        p.add2(.mono, cores.valor, pt, en, args);
     }
     pub fn esp(p: *Painel) void {
         p.add(.espaco, 0, "", .{});
@@ -133,8 +153,8 @@ pub const App = struct {
         switch (app.aula) {
             inline 0...campos.len - 1 => |i| {
                 const s = &@field(app, campos[i]);
-                const T = @TypeOf(s.*);
-                if (@hasDecl(T, nome)) @call(.auto, @field(T, nome), .{ s, app } ++ args);
+                const Tipo = @TypeOf(s.*);
+                if (@hasDecl(Tipo, nome)) @call(.auto, @field(Tipo, nome), .{ s, app } ++ args);
             },
             else => {},
         }
@@ -193,6 +213,9 @@ pub const App = struct {
         const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
         app.texto(x, y, s, cor);
     }
+    pub fn textoF2(app: *App, x: i32, y: i32, cor: Cor, comptime pt: []const u8, comptime en: []const u8, args: anytype) void {
+        if (ingles) app.textoF(x, y, cor, en, args) else app.textoF(x, y, cor, pt, args);
+    }
     pub fn ret(app: *App, x0: i32, y0: i32, x1: i32, y1: i32, cor: Cor) void {
         app.tela.retangulo(.{ .x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1 }, cor);
     }
@@ -218,7 +241,7 @@ pub const App = struct {
         }
         app.tela.limpar(cores.demo);
         var p: Painel = .{};
-        p.add(.titulo, cores.texto, "{d}. {s}", .{ app.aula + 1, titulos[app.aula] });
+        p.add(.titulo, cores.texto, "{d}. {s}", .{ app.aula + 1, tituloAula(app.aula) });
         app.naAula("pintar", .{&p});
         app.pintarLateral();
         app.pintarPainel(&p);
@@ -231,9 +254,10 @@ pub const App = struct {
 
     fn pintarLateral(app: *App) void {
         app.ret(0, 0, largura_lateral, app.tela.altura, cores.lateral);
-        _ = fonte.escrever(&app.tela, 16, 16, "CG Interativa", cores.texto, 2);
-        app.texto(16, 52, "Computação Gráfica", cores.fraco);
-        for (titulos, 0..) |t, i| {
+        _ = fonte.escrever(&app.tela, 16, 16, T("CG Interativa", "CG Interativa"), cores.texto, 2);
+        app.texto(16, 52, T("Computação Gráfica", "Computer Graphics"), cores.fraco);
+        for (0..titulos.len) |i| {
+            const t = tituloAula(i);
             const y: i32 = 90 + @as(i32, @intCast(i)) * 36;
             const atual = i == app.aula;
             const sobre = app.mx < largura_lateral and app.my >= y and app.my < y + 32;
@@ -241,9 +265,18 @@ pub const App = struct {
             app.textoF(18, y + 8, if (atual) cores.branco else cores.fraco, "{d}", .{i + 1});
             app.texto(40, y + 8, t, if (atual) cores.branco else cores.texto);
         }
+        // Botão de idioma: PT | EN.
+        const yi: i32 = @as(i32, app.tela.altura) - 100;
+        for ([_][]const u8{ "PT", "EN" }, 0..) |rot, k| {
+            const x0: i32 = 16 + @as(i32, @intCast(k)) * 52;
+            const ativo = @intFromBool(ingles) == k;
+            app.ret(x0, yi, x0 + 46, yi + 26, if (ativo) cores.roxo else opaco | 0x34343c);
+            app.texto(x0 + 15, yi + 5, rot, if (ativo) cores.branco else cores.fraco);
+        }
+        app.texto(122, yi + 5, "F2", cores.fraco);
         const yb: i32 = @as(i32, app.tela.altura) - 60;
-        app.texto(16, yb, "1-9 ou clique: aula", cores.fraco);
-        app.texto(16, yb + 20, "PgUp/PgDn: anterior/próx.", cores.fraco);
+        app.texto(16, yb, T("1-9 ou clique: aula", "1-9 or click: lesson"), cores.fraco);
+        app.texto(16, yb + 20, T("PgUp/PgDn: anterior/próx.", "PgUp/PgDn: prev/next"), cores.fraco);
     }
 
     fn pintarPainel(app: *App, p: *Painel) void {
@@ -303,6 +336,10 @@ pub const App = struct {
             '1'...'9' => return app.irPara(s - '1'),
             0xff55 => return app.irPara(if (app.aula == 0) titulos.len - 1 else app.aula - 1),
             0xff56 => return app.irPara((app.aula + 1) % titulos.len),
+            0xffbf => {
+                ingles = !ingles;
+                return;
+            },
             else => {},
         }
         app.naAula("tecla", .{s});
@@ -311,8 +348,13 @@ pub const App = struct {
     fn apertou(app: *App, b: Botao) void {
         if (b.x < largura_lateral) {
             if (b.numero != 1) return;
+            const yi: i32 = @as(i32, app.tela.altura) - 100;
+            if (b.y >= yi and b.y < yi + 26 and b.x >= 16 and b.x < 114) {
+                ingles = b.x >= 68;
+                return;
+            }
             const i = @divFloor(b.y - 90, 36);
-            if (i >= 0 and b.y >= 90) app.irPara(@intCast(i));
+            if (i >= 0 and i < titulos.len and b.y >= 90) app.irPara(@intCast(i));
             return;
         }
         if (b.x >= @as(i32, app.tela.largura) - largura_painel) return;
@@ -415,7 +457,7 @@ const Framebuffer = struct {
             app.ret(x0, y0, x0 + g.s, y0 + g.s, opaco | 0x3a3a40);
             app.ret(x0 + 1, y0 + 1, x0 + g.s, y0 + g.s, f.px[y][x]);
         };
-        app.texto(g.x0, g.y0 - 22, "framebuffer[20][32]: cada quadrado é um pixel", cores.cinza);
+        app.texto(g.x0, g.y0 - 22, T("framebuffer[20][32]: cada quadrado é um pixel", "framebuffer[20][32]: each square is a pixel"), cores.cinza);
         const sob = celula(app);
         if (sob) |c| {
             const x0 = g.x0 + @as(i32, @intCast(c[0])) * g.s;
@@ -424,8 +466,8 @@ const Framebuffer = struct {
         }
         // Em tamanho real: o mesmo vetor, 1 pixel do framebuffer = 1 pixel do monitor.
         const yb = g.y0 + g.s * NY + 30;
-        app.texto(g.x0, yb, "tamanho real (1:1)", cores.cinza);
-        app.texto(g.x0 + 200, yb, "ampliado 4x", cores.cinza);
+        app.texto(g.x0, yb, T("tamanho real (1:1)", "actual size (1:1)"), cores.cinza);
+        app.texto(g.x0 + 200, yb, T("ampliado 4x", "zoomed 4x"), cores.cinza);
         for (0..NY) |y| for (0..NX) |x| {
             const c = f.px[y][x];
             app.tela.ponto(g.x0 + @as(i32, @intCast(x)), yb + 24 + @as(i32, @intCast(y)), c);
@@ -433,29 +475,29 @@ const Framebuffer = struct {
             app.ret(g.x0 + 200 + @as(i32, @intCast(x)) * k, yb + 24 + @as(i32, @intCast(y)) * k, g.x0 + 200 + @as(i32, @intCast(x + 1)) * k, yb + 24 + @as(i32, @intCast(y + 1)) * k, c);
         };
 
-        p.titulo("O que é");
-        p.txt("A imagem na tela é uma matriz de pixels guardada na memória: o framebuffer. O monitor lê essa memória várias vezes por segundo e acende cada ponto com a cor que está lá.");
-        p.txt("Cada pixel guarda uma cor em RGB: 3 números de 0 a 255 (8 bits cada), juntos num inteiro de 32 bits 0xRRGGBB.");
-        p.txt("A matriz é guardada linha por linha num vetor só: o pixel (x, y) fica no índice y * largura + x.");
-        p.titulo("Ao vivo");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("A imagem na tela é uma matriz de pixels guardada na memória: o framebuffer. O monitor lê essa memória várias vezes por segundo e acende cada ponto com a cor que está lá.", "The image on screen is a matrix of pixels stored in memory: the framebuffer. The monitor reads this memory many times per second and lights each dot with the color stored there."));
+        p.txt(T("Cada pixel guarda uma cor em RGB: 3 números de 0 a 255 (8 bits cada), juntos num inteiro de 32 bits 0xRRGGBB.", "Each pixel stores an RGB color: 3 numbers from 0 to 255 (8 bits each), packed into a 32-bit integer 0xRRGGBB."));
+        p.txt(T("A matriz é guardada linha por linha num vetor só: o pixel (x, y) fica no índice y * largura + x.", "The matrix is stored row by row in a single array: pixel (x, y) is at index y * width + x."));
+        p.titulo(T("Ao vivo", "Live"));
         if (sob) |c| {
             const cor = f.px[c[1]][c[0]] & 0xffffff;
-            p.val("framebuffer[{d}][{d}]  (y, x)", .{ c[1], c[0] });
-            p.val("índice = {d}*32 + {d} = {d}", .{ c[1], c[0], c[1] * NX + c[0] });
-            p.val("byte   = índice * 4 = {d}", .{(c[1] * NX + c[0]) * 4});
-            p.val("cor = 0x{x:0>6}  R={d} G={d} B={d}", .{ cor, cor >> 16, (cor >> 8) & 0xff, cor & 0xff });
-        } else p.val("(passe o mouse na grade)", .{});
-        p.val("32 x 20 = 640 pixels = 2560 bytes", .{});
+            p.v2("framebuffer[{d}][{d}]  (y, x)", "framebuffer[{d}][{d}]  (y, x)", .{ c[1], c[0] });
+            p.v2("índice = {d}*32 + {d} = {d}", "index = {d}*32 + {d} = {d}", .{ c[1], c[0], c[1] * NX + c[0] });
+            p.v2("byte   = índice * 4 = {d}", "byte  = index * 4 = {d}", .{(c[1] * NX + c[0]) * 4});
+            p.v2("cor = 0x{x:0>6}  R={d} G={d} B={d}", "color = 0x{x:0>6}  R={d} G={d} B={d}", .{ cor, cor >> 16, (cor >> 8) & 0xff, cor & 0xff });
+        } else p.v2("(passe o mouse na grade)", "(hover the grid)", .{});
+        p.v2("32 x 20 = 640 pixels = 2560 bytes", "32 x 20 = 640 pixels = 2560 bytes", .{});
         const w: usize = app.tela.largura;
         const h: usize = app.tela.altura;
-        p.val("esta janela: {d} x {d} = {d} pixels", .{ w, h, w * h });
-        p.val("             = {d:.1} MB por quadro", .{@as(f32, @floatFromInt(w * h * 4)) / 1e6});
-        p.titulo("Controles");
-        p.ctl("botão esquerdo   acende o pixel");
-        p.ctl("botão direito    apaga");
-        p.val("c  troca a cor (atual: 0x{x:0>6})", .{paleta[f.cor_i] & 0xffffff});
-        p.ctl("g  gradiente: R cresce com x, G com y");
-        p.ctl("l  limpa tudo");
+        p.v2("esta janela: {d} x {d} = {d} pixels", "this window: {d} x {d} = {d} pixels", .{ w, h, w * h });
+        p.v2("             = {d:.1} MB por quadro", "             = {d:.1} MB per frame", .{@as(f32, @floatFromInt(w * h * 4)) / 1e6});
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("botão esquerdo   acende o pixel", "left button    lights the pixel"));
+        p.ctl(T("botão direito    apaga", "right button   clears it"));
+        p.v2("c  troca a cor (atual: 0x{x:0>6})", "c  change color (now: 0x{x:0>6})", .{paleta[f.cor_i] & 0xffffff});
+        p.ctl(T("g  gradiente: R cresce com x, G com y", "g  gradient: R grows with x, G with y"));
+        p.ctl(T("l  limpa tudo", "l  clear all"));
     }
 };
 
@@ -599,7 +641,7 @@ const Retas = struct {
         const g = geo(app);
         const n = r.calcular();
         const visiveis: usize = if (r.anim) @min(n, @as(usize, @intFromFloat(@mod(r.t * 8, fl(@intCast(n + 10)))))) else n;
-        app.textoF(g.x0, g.y0 - 24, cores.cinza, "algoritmo: {s}", .{@tagName(r.modo)});
+        app.textoF2(g.x0, g.y0 - 24, cores.cinza, "algoritmo: {s}", "algorithm: {s}", .{@tagName(r.modo)});
         for (0..NY) |y| for (0..NX) |x| {
             const x0 = g.x0 + @as(i32, @intCast(x)) * g.s;
             const y0 = g.y0 + @as(i32, @intCast(y)) * g.s;
@@ -621,33 +663,33 @@ const Retas = struct {
 
         const dx = r.b[0] - r.a[0];
         const dy = r.b[1] - r.a[1];
-        p.titulo("O que é");
-        p.txt("Rasterizar é decidir quais pixels acender para representar uma forma contínua. A reta vermelha é a ideal; os quadrados escuros são o que a tela consegue mostrar.");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Rasterizar é decidir quais pixels acender para representar uma forma contínua. A reta vermelha é a ideal; os quadrados escuros são o que a tela consegue mostrar.", "Rasterizing means deciding which pixels to light to represent a continuous shape. The red line is the ideal one; the dark squares are what the screen can show."));
         switch (r.modo) {
-            .dda => p.txt("DDA: dá max(|dx|,|dy|) passos, somando um incremento real em x e y e arredondando. Simples, mas usa ponto flutuante e arredondamento a cada pixel."),
-            .bresenham => p.txt("Bresenham: só soma e compara inteiros. A variável erro guarda o quanto a reta ideal se afastou do pixel atual; quando passa do meio, o algoritmo muda de linha."),
-            .antialiasing => p.txt("Antialiasing: cada pixel recebe uma fração da cor proporcional à cobertura (aqui, 1 - distância do centro do pixel à reta). Some o efeito de escada (serrilhado)."),
+            .dda => p.txt(T("DDA: dá max(|dx|,|dy|) passos, somando um incremento real em x e y e arredondando. Simples, mas usa ponto flutuante e arredondamento a cada pixel.", "DDA: takes max(|dx|,|dy|) steps, adding a real increment to x and y and rounding. Simple, but it uses floating point and rounding at every pixel.")),
+            .bresenham => p.txt(T("Bresenham: só soma e compara inteiros. A variável erro guarda o quanto a reta ideal se afastou do pixel atual; quando passa do meio, o algoritmo muda de linha.", "Bresenham: only adds and compares integers. The error variable tracks how far the ideal line has drifted from the current pixel; when it passes halfway, the algorithm moves to the next row.")),
+            .antialiasing => p.txt(T("Antialiasing: cada pixel recebe uma fração da cor proporcional à cobertura (aqui, 1 - distância do centro do pixel à reta). Some o efeito de escada (serrilhado).", "Antialiasing: each pixel gets a fraction of the color proportional to its coverage (here, 1 - distance from the pixel center to the line). The staircase effect (jaggies) goes away.")),
         }
-        p.titulo("Ao vivo");
+        p.titulo(T("Ao vivo", "Live"));
         p.val("A = ({d}, {d})   B = ({d}, {d})", .{ r.a[0], r.a[1], r.b[0], r.b[1] });
-        p.val("dx = {d}   dy = {d}   pixels = {d}", .{ dx, dy, n });
-        if (dx != 0) p.val("inclinação m = dy/dx = {d:.3}", .{fl(dy) / fl(dx)}) else p.val("reta vertical (dx = 0)", .{});
+        p.v2("dx = {d}   dy = {d}   pixels = {d}", "dx = {d}   dy = {d}   pixels = {d}", .{ dx, dy, n });
+        if (dx != 0) p.v2("inclinação m = dy/dx = {d:.3}", "slope m = dy/dx = {d:.3}", .{fl(dy) / fl(dx)}) else p.v2("reta vertical (dx = 0)", "vertical line (dx = 0)", .{});
         switch (r.modo) {
             .dda => {
-                p.val(" i   x real  y real  ->  pixel", .{});
+                p.v2(" i   x real  y real  ->  pixel", " i   real x  real y  ->  pixel", .{});
                 for (r.px[0..@min(n, 12)], 0..) |q, i| p.val("{d:>2}  {d:>6.2}  {d:>6.2}  ->  ({d}, {d})", .{ i, q.rx, q.ry, @as(u32, @intCast(q.x)), @as(u32, @intCast(q.y)) });
             },
             .bresenham => {
-                p.val(" i   pixel      erro", .{});
+                p.v2(" i   pixel      erro", " i   pixel      error", .{});
                 for (r.px[0..@min(n, 12)], 0..) |q, i| p.val("{d:>2}  ({d:>2}, {d:>2})   {d}", .{ i, @as(u32, @intCast(q.x)), @as(u32, @intCast(q.y)), q.erro });
             },
-            .antialiasing => p.val("pixels parciais: {d}", .{n}),
+            .antialiasing => p.v2("pixels parciais: {d}", "partial pixels: {d}", .{n}),
         }
         if (n > 12 and r.modo != .antialiasing) p.val(" ...", .{});
-        p.titulo("Controles");
-        p.ctl("arraste perto de A ou B   move a ponta");
-        p.ctl("m  troca: DDA / Bresenham / antialiasing");
-        p.ctl("a  anima o desenho pixel a pixel");
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("arraste perto de A ou B   move a ponta", "drag near A or B   moves the endpoint"));
+        p.ctl(T("m  troca: DDA / Bresenham / antialiasing", "m  switch: DDA / Bresenham / antialiasing"));
+        p.ctl(T("a  anima o desenho pixel a pixel", "a  animate pixel by pixel"));
     }
 };
 
@@ -798,30 +840,30 @@ const Transformacoes = struct {
         const po = v.aplicar(3, 5);
         app.circulo(po.x, po.y, 3, cores.cinza);
         app.texto(paraInt(po.x) + 6, paraInt(po.y) - 8, "P", cores.cinza);
-        app.texto(a.x0 + 16, a.y1 - 60, "--- original (cinza)", cores.cinza);
-        app.textoF(a.x0 + 16, a.y1 - 40, cores.laranja, "--- mesma T, R, S na ordem {s}", .{if (t.trocada) "T·R·S" else "R·T·S"});
-        app.textoF(a.x0 + 16, a.y1 - 20, cores.roxo, "___ resultado: M = {s}", .{if (t.trocada) "R·T·S" else "T·R·S"});
+        app.texto(a.x0 + 16, a.y1 - 60, T("--- original (cinza)", "--- original (gray)"), cores.cinza);
+        app.textoF2(a.x0 + 16, a.y1 - 40, cores.laranja, "--- mesma T, R, S na ordem {s}", "--- same T, R, S in order {s}", .{if (t.trocada) "T·R·S" else "R·T·S"});
+        app.textoF2(a.x0 + 16, a.y1 - 20, cores.roxo, "___ resultado: M = {s}", "___ result: M = {s}", .{if (t.trocada) "R·T·S" else "T·R·S"});
 
         const pt = t.partes();
         const pr = m.aplicar(3, 5);
-        p.titulo("O que é");
-        p.txt("Com coordenadas homogêneas, o ponto (x, y) vira (x, y, 1) e translação, rotação e escala viram todas matrizes 3x3. Juntar transformações é multiplicar matrizes.");
-        p.txt("A ordem importa: em M = T·R·S o ponto é escalado, depois girado em torno da origem, depois transladado. Trocar a ordem (o contorno laranja) dá outro resultado.");
-        p.titulo("Ao vivo");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Com coordenadas homogêneas, o ponto (x, y) vira (x, y, 1) e translação, rotação e escala viram todas matrizes 3x3. Juntar transformações é multiplicar matrizes.", "With homogeneous coordinates, the point (x, y) becomes (x, y, 1) and translation, rotation and scaling all become 3x3 matrices. Combining transformations is multiplying matrices."));
+        p.txt(T("A ordem importa: em M = T·R·S o ponto é escalado, depois girado em torno da origem, depois transladado. Trocar a ordem (o contorno laranja) dá outro resultado.", "Order matters: in M = T·R·S the point is scaled, then rotated around the origin, then translated. Swapping the order (orange outline) gives a different result."));
+        p.titulo(T("Ao vivo", "Live"));
         p.mat3("S =", pt[2]);
         p.mat3(if (t.pivo and !t.trocada) "R'=" else "R =", pt[1]);
         p.mat3("T =", pt[0]);
         p.mat3("M =", m);
         p.val("P = (3, 5, 1)  ->  P' = M·P = ({d:.2}, {d:.2}, 1)", .{ pr.x, pr.y });
-        p.val("ângulo {d:.0} graus, escala ({d:.2}, {d:.2})", .{ t.ang, t.sx, t.sy });
+        p.v2("ângulo {d:.0} graus, escala ({d:.2}, {d:.2})", "angle {d:.0} degrees, scale ({d:.2}, {d:.2})", .{ t.ang, t.sx, t.sy });
         if (t.pivo and !t.trocada) p.val("R' = T(c)·R·T(-c), c = (1.5, 2.5)", .{});
-        p.titulo("Controles");
-        p.ctl("arrastar / setas  translada (T)");
-        p.ctl("q / e      gira 15 graus (R)");
-        p.ctl("- / = ou rodinha  escala (S)");
-        p.ctl("x / y      espelha (escala -1)");
-        p.ctl("o  troca a ordem   c  gira no centro");
-        p.ctl("a  anima a rotação   0  volta ao início");
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("arrastar / setas  translada (T)", "drag / arrows  translate (T)"));
+        p.ctl(T("q / e      gira 15 graus (R)", "q / e      rotate 15 degrees (R)"));
+        p.ctl(T("- / = ou rodinha  escala (S)", "- / = or wheel  scale (S)"));
+        p.ctl(T("x / y      espelha (escala -1)", "x / y      mirror (scale -1)"));
+        p.ctl(T("o  troca a ordem   c  gira no centro", "o  swap order   c  rotate about center"));
+        p.ctl(T("a  anima a rotação   0  volta ao início", "a  animate rotation   0  reset"));
     }
 };
 
@@ -836,7 +878,7 @@ const BAIXO: u4 = 4;
 const CIMA: u4 = 8;
 
 /// Código de região de 4 bits: cima, baixo, direita, esquerda (na tela o y
-/// cresce pra baixo, então "cima" é y < ymin).
+/// cresce pra baixo, então T("cima", "top") é y < ymin).
 pub fn codigo(r: Retangulo, x: f32, y: f32) u4 {
     var c: u4 = 0;
     if (x < r.xmin) c |= ESQ;
@@ -862,6 +904,9 @@ const Passos = struct {
         ps.tam[ps.n] = s.len;
         ps.n += 1;
     }
+    fn add2(ps: *Passos, comptime pt: []const u8, comptime en: []const u8, args: anytype) void {
+        if (ingles) ps.add(en, args) else ps.add(pt, args);
+    }
 };
 
 /// Cohen-Sutherland: se os dois códigos são 0, a reta está toda dentro; se
@@ -875,11 +920,11 @@ pub fn cohenSutherland(r: Retangulo, a0: [2]f32, b0: [2]f32, passos: ?*Passos) ?
     var volta: usize = 0;
     while (volta < 8) : (volta += 1) {
         if (ca | cb == 0) {
-            if (passos) |ps| ps.add("{s} | {s} = 0000: aceita", .{ bits(ca), bits(cb) });
+            if (passos) |ps| ps.add2("{s} | {s} = 0000: aceita", "{s} | {s} = 0000: accept", .{ bits(ca), bits(cb) });
             return .{ a, b };
         }
         if (ca & cb != 0) {
-            if (passos) |ps| ps.add("{s} & {s} != 0: rejeita", .{ bits(ca), bits(cb) });
+            if (passos) |ps| ps.add2("{s} & {s} != 0: rejeita", "{s} & {s} != 0: reject", .{ bits(ca), bits(cb) });
             return null;
         }
         const fora = if (ca != 0) ca else cb;
@@ -889,18 +934,18 @@ pub fn cohenSutherland(r: Retangulo, a0: [2]f32, b0: [2]f32, passos: ?*Passos) ?
         var borda: []const u8 = undefined;
         if (fora & CIMA != 0) {
             n = .{ p[0] + (q[0] - p[0]) * (r.ymin - p[1]) / (q[1] - p[1]), r.ymin };
-            borda = "cima";
+            borda = T("cima", "top");
         } else if (fora & BAIXO != 0) {
             n = .{ p[0] + (q[0] - p[0]) * (r.ymax - p[1]) / (q[1] - p[1]), r.ymax };
-            borda = "baixo";
+            borda = T("baixo", "bottom");
         } else if (fora & DIR != 0) {
             n = .{ r.xmax, p[1] + (q[1] - p[1]) * (r.xmax - p[0]) / (q[0] - p[0]) };
-            borda = "direita";
+            borda = T("direita", "right");
         } else {
             n = .{ r.xmin, p[1] + (q[1] - p[1]) * (r.xmin - p[0]) / (q[0] - p[0]) };
-            borda = "esquerda";
+            borda = T("esquerda", "left");
         }
-        if (passos) |ps| ps.add("{s} {s}: corta {s} na borda {s}", .{ bits(ca), bits(cb), if (ca != 0) "A" else "B", borda });
+        if (passos) |ps| ps.add2("{s} {s}: corta {s} na borda {s}", "{s} {s}: clip {s} at the {s} edge", .{ bits(ca), bits(cb), if (ca != 0) "A" else "B", borda });
         if (ca != 0) {
             a = n;
             ca = codigo(r, a[0], a[1]);
@@ -1029,23 +1074,23 @@ const RecorteAula = struct {
         }
         if (rc.novo) |ini| app.linha(ini[0], ini[1], fl(app.mx), fl(app.my), 1.5, cores.laranja);
 
-        p.titulo("O que é");
-        p.txt("Recortar é jogar fora o que cai fora da janela de visualização antes de desenhar. Cohen-Sutherland dá a cada ponta um código de 4 bits: cima, baixo, direita, esquerda.");
-        p.txt("Códigos 0000 e 0000: a reta está toda dentro (aceita). E lógico dos códigos diferente de 0: as duas pontas estão do mesmo lado de fora (rejeita sem fazer conta). Senão, corta a ponta de fora na borda e repete.");
-        p.titulo("Ao vivo");
-        p.val("verdes inteiras: {d}  cortadas: {d}", .{ aceitas, cortadas });
-        p.val("rejeitadas (vermelhas): {d}", .{rejeitadas});
-        p.val("janela: x {d:.0}..{d:.0}  y {d:.0}..{d:.0}", .{ j.xmin, j.xmax, j.ymin, j.ymax });
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Recortar é jogar fora o que cai fora da janela de visualização antes de desenhar. Cohen-Sutherland dá a cada ponta um código de 4 bits: cima, baixo, direita, esquerda.", "Clipping means discarding what falls outside the viewing window before drawing. Cohen-Sutherland gives each endpoint a 4-bit code: top, bottom, right, left."));
+        p.txt(T("Códigos 0000 e 0000: a reta está toda dentro (aceita). E lógico dos códigos diferente de 0: as duas pontas estão do mesmo lado de fora (rejeita sem fazer conta). Senão, corta a ponta de fora na borda e repete.", "Codes 0000 and 0000: the line is fully inside (accept). Logical AND of the codes not 0: both endpoints are outside on the same side (reject with no math). Otherwise, clip the outside endpoint at the edge and repeat."));
+        p.titulo(T("Ao vivo", "Live"));
+        p.v2("verdes inteiras: {d}  cortadas: {d}", "fully inside: {d}  clipped: {d}", .{ aceitas, cortadas });
+        p.v2("rejeitadas (vermelhas): {d}", "rejected (red): {d}", .{rejeitadas});
+        p.v2("janela: x {d:.0}..{d:.0}  y {d:.0}..{d:.0}", "window: x {d:.0}..{d:.0}  y {d:.0}..{d:.0}", .{ j.xmin, j.xmax, j.ymin, j.ymax });
         if (rc.n > 0) {
-            p.val("passos da última reta (laranja):", .{});
+            p.v2("passos da última reta (laranja):", "steps for the last line (orange):", .{});
             for (0..ps.n) |i| p.val("  {s}", .{ps.buf[i][0..ps.tam[i]]});
         }
-        p.titulo("Controles");
-        p.ctl("arrastar (esquerdo)  desenha uma reta");
-        p.ctl("arrastar (direito)   move a janela");
-        p.ctl("rodinha    muda o tamanho da janela");
-        p.ctl("espaço  retas novas   l  limpa");
-        p.ctl("r  mostra/esconde os códigos");
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("arrastar (esquerdo)  desenha uma reta", "drag (left)    draw a line"));
+        p.ctl(T("arrastar (direito)   move a janela", "drag (right)   move the window"));
+        p.ctl(T("rodinha    muda o tamanho da janela", "wheel    resize the window"));
+        p.ctl(T("espaço  retas novas   l  limpa", "space  new lines   l  clear"));
+        p.ctl(T("r  mostra/esconde os códigos", "r  show/hide the codes"));
     }
 };
 
@@ -1182,7 +1227,7 @@ const JanelaViewport = struct {
         const w1 = m.aplicar(j.jan.xmax, j.jan.ymax);
         app.contorno(paraInt(w0.x), paraInt(w1.y), paraInt(w1.x), paraInt(w0.y), cores.roxo);
         app.contorno(paraInt(w0.x) - 1, paraInt(w1.y) - 1, paraInt(w1.x) + 1, paraInt(w0.y) + 1, cores.roxo);
-        app.texto(paraInt(c0.x), 14, "MUNDO (coordenadas do objeto)", cores.cinza);
+        app.texto(paraInt(c0.x), 14, T("MUNDO (coordenadas do objeto)", "WORLD (object coordinates)"), cores.cinza);
         app.textoF(paraInt(w0.x), paraInt(w0.y) + 4, cores.roxo, "({d:.1}, {d:.1})", .{ j.jan.xmin, j.jan.ymin });
         app.textoF(paraInt(w1.x) - 90, paraInt(w1.y) - 18, cores.roxo, "({d:.1}, {d:.1})", .{ j.jan.xmax, j.jan.ymax });
         // Viewport.
@@ -1193,7 +1238,7 @@ const JanelaViewport = struct {
             if (cohenSutherland(v, .{ a.x, a.y }, .{ b.x, b.y }, null)) |r| app.linha(r[0][0], r[0][1], r[1][0], r[1][1], 2, s.cor);
         }
         app.contorno(paraInt(v.xmin), paraInt(v.ymin), paraInt(v.xmax), paraInt(v.ymax), cores.tinta);
-        app.texto(paraInt(v.xmin), 14, "VIEWPORT (pixels da tela)", cores.cinza);
+        app.texto(paraInt(v.xmin), 14, T("VIEWPORT (pixels da tela)", "VIEWPORT (screen pixels)"), cores.cinza);
         app.textoF(paraInt(v.xmin), paraInt(v.ymax) + 6, cores.tinta, "({d:.0}, {d:.0})", .{ v.xmin, v.ymax });
         app.textoF(paraInt(v.xmax) - 100, paraInt(v.ymin) - 20, cores.tinta, "({d:.0}, {d:.0})", .{ v.xmax, v.ymin });
 
@@ -1204,28 +1249,28 @@ const JanelaViewport = struct {
         const sx = (v.xmax - v.xmin) / (j.jan.xmax - j.jan.xmin);
         const sy = (v.ymax - v.ymin) / (j.jan.ymax - j.jan.ymin);
 
-        p.titulo("O que é");
-        p.txt("O desenho é descrito em coordenadas do mundo (metros, unidades quaisquer). A janela escolhe o pedaço do mundo que vai aparecer; o viewport é o retângulo da tela, em pixels, onde ele aparece.");
-        p.txt("A transformação janela-viewport é uma translação, uma escala e outra translação. O que sai da janela é recortado (Cohen-Sutherland, aula 5).");
-        p.titulo("Ao vivo");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("O desenho é descrito em coordenadas do mundo (metros, unidades quaisquer). A janela escolhe o pedaço do mundo que vai aparecer; o viewport é o retângulo da tela, em pixels, onde ele aparece.", "The drawing is described in world coordinates (meters, any unit). The window selects the part of the world to show; the viewport is the screen rectangle, in pixels, where it appears."));
+        p.txt(T("A transformação janela-viewport é uma translação, uma escala e outra translação. O que sai da janela é recortado (Cohen-Sutherland, aula 5).", "The window-to-viewport transformation is a translation, a scale and another translation. Whatever falls outside the window is clipped (Cohen-Sutherland, lesson 5)."));
+        p.titulo(T("Ao vivo", "Live"));
         p.val("sx = ({d:.0}-{d:.0}) / ({d:.1}-{d:.1}) = {d:.2}", .{ v.xmax, v.xmin, j.jan.xmax, j.jan.xmin, sx });
         p.val("sy = ({d:.0}-{d:.0}) / ({d:.1}-{d:.1}) = {d:.2}", .{ v.ymax, v.ymin, j.jan.ymax, j.jan.ymin, sy });
         p.val("M = T(vxmin, vymax)·S(sx, -sy)·T(-xmin, -ymin)", .{});
         p.mat3("M =", mv);
-        if (@abs(sx - sy) > 0.01 * sx) p.add(.mono, cores.vermelho, "sx != sy: a imagem fica esticada!", .{}) else p.val("sx = sy: proporção mantida", .{});
+        if (@abs(sx - sy) > 0.01 * sx) p.add2(.mono, cores.vermelho, "sx != sy: a imagem fica esticada!", "sx != sy: the image gets stretched!", .{}) else p.v2("sx = sy: proporção mantida", "sx = sy: aspect ratio kept", .{});
         if (dentro_mundo) {
             const r = mv.aplicar(q.x, q.y);
-            p.val("mouse no mundo ({d:.2}, {d:.2})", .{ q.x, q.y });
+            p.v2("mouse no mundo ({d:.2}, {d:.2})", "mouse in world ({d:.2}, {d:.2})", .{ q.x, q.y });
             p.val("     -> viewport ({d:.0}, {d:.0}) px", .{ r.x, r.y });
             const pm = m.aplicar(q.x, q.y);
             app.circulo(pm.x, pm.y, 4, cores.laranja);
             if (r.x >= v.xmin and r.x <= v.xmax and r.y >= v.ymin and r.y <= v.ymax) app.circulo(r.x, r.y, 5, cores.laranja);
         }
-        p.titulo("Controles");
-        p.ctl("arrastar no mundo   move a janela");
-        p.ctl("rodinha             zoom (tamanho)");
-        p.ctl("[ ]  largura    , .  altura");
-        p.ctl("p  corrige a proporção   0  volta");
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("arrastar no mundo   move a janela", "drag in world   move the window"));
+        p.ctl(T("rodinha             zoom (tamanho)", "wheel           zoom (size)"));
+        p.ctl(T("[ ]  largura    , .  altura", "[ ]  width    , .  height"));
+        p.ctl(T("p  corrige a proporção   0  volta", "p  fix aspect ratio   0  reset"));
     }
 };
 
@@ -1315,7 +1360,7 @@ const Projecao = struct {
         const iy = fl(a.y1) - ih - 14;
         app.ret(paraInt(ix), paraInt(iy), paraInt(ix + iw), paraInt(iy + ih), cores.branco);
         app.contorno(paraInt(ix), paraInt(iy), paraInt(ix + iw), paraInt(iy + ih), cores.cinza);
-        app.texto(paraInt(ix) + 6, paraInt(iy) + 4, "vista de cima (x, z da câmera)", cores.cinza);
+        app.texto(paraInt(ix) + 6, paraInt(iy) + 4, T("vista de cima (x, z da câmera)", "top view (camera x, z)"), cores.cinza);
         const k = (ih - 40) / (pj.dist + 2);
         const camx = ix + iw / 2;
         const camy = iy + ih - 12;
@@ -1339,28 +1384,28 @@ const Projecao = struct {
             app.linha(camx + pa.x * k, camy + pa.z * k, camx + pb.x * k, camy + pb.z * k, 1.5, cores.tinta);
         };
         app.circulo(camx, camy, 5, cores.roxo);
-        app.texto(paraInt(camx) + 8, paraInt(camy) - 10, "olho", cores.roxo);
+        app.texto(paraInt(camx) + 8, paraInt(camy) - 10, T("olho", "eye"), cores.roxo);
 
         const mundo = ms[0].aplicar4(vtx);
         const cam = mv.aplicar4(vtx);
         const clip = mvp.aplicar4(vtx);
-        p.titulo("O que é");
-        p.txt("Para mostrar um objeto 3D numa tela 2D, cada vértice passa por matrizes 4x4: modelo (gira o objeto), câmera (põe o olho na origem olhando para -z) e projeção.");
-        if (pj.perspectiva) p.txt("Na perspectiva, a projeção copia -z para w. Depois de dividir x e y por w, o que está longe encolhe: as arestas paralelas convergem.") else p.txt("Na ortográfica, w fica 1: nada encolhe com a distância e as arestas paralelas continuam paralelas (desenho técnico).");
-        p.titulo("Ao vivo: o vértice V = (1, 1, 1)");
-        p.val("mundo   ({d:>5.2}, {d:>5.2}, {d:>5.2})", .{ mundo[0], mundo[1], mundo[2] });
-        p.val("câmera  ({d:>5.2}, {d:>5.2}, {d:>5.2})", .{ cam[0], cam[1], cam[2] });
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Para mostrar um objeto 3D numa tela 2D, cada vértice passa por matrizes 4x4: modelo (gira o objeto), câmera (põe o olho na origem olhando para -z) e projeção.", "To show a 3D object on a 2D screen, each vertex goes through 4x4 matrices: model (rotates the object), camera (puts the eye at the origin looking down -z) and projection."));
+        if (pj.perspectiva) p.txt(T("Na perspectiva, a projeção copia -z para w. Depois de dividir x e y por w, o que está longe encolhe: as arestas paralelas convergem.", "In perspective, the projection copies -z into w. After dividing x and y by w, distant things shrink: parallel edges converge.")) else p.txt(T("Na ortográfica, w fica 1: nada encolhe com a distância e as arestas paralelas continuam paralelas (desenho técnico).", "In orthographic, w stays 1: nothing shrinks with distance and parallel edges stay parallel (technical drawing)."));
+        p.titulo(T("Ao vivo: o vértice V = (1, 1, 1)", "Live: vertex V = (1, 1, 1)"));
+        p.v2("mundo   ({d:>5.2}, {d:>5.2}, {d:>5.2})", "world   ({d:>5.2}, {d:>5.2}, {d:>5.2})", .{ mundo[0], mundo[1], mundo[2] });
+        p.v2("câmera  ({d:>5.2}, {d:>5.2}, {d:>5.2})", "camera  ({d:>5.2}, {d:>5.2}, {d:>5.2})", .{ cam[0], cam[1], cam[2] });
         p.val("clip    ({d:>5.2}, {d:>5.2}, {d:>5.2}, w={d:.2})", .{ clip[0], clip[1], clip[2], clip[3] });
-        p.val("/w      ({d:>5.2}, {d:>5.2})  (NDC, -1 a 1)", .{ clip[0] / clip[3], clip[1] / clip[3] });
-        p.val("tela    ({d:.0}, {d:.0}) px", .{ cx + clip[0] / clip[3] * meio, cy - clip[1] / clip[3] * meio });
+        p.v2("/w      ({d:>5.2}, {d:>5.2})  (NDC, -1 a 1)", "/w      ({d:>5.2}, {d:>5.2})  (NDC, -1 to 1)", .{ clip[0] / clip[3], clip[1] / clip[3] });
+        p.v2("tela    ({d:.0}, {d:.0}) px", "screen  ({d:.0}, {d:.0}) px", .{ cx + clip[0] / clip[3] * meio, cy - clip[1] / clip[3] * meio });
         p.mat4(if (pj.perspectiva) "P =" else "O =", ms[2]);
-        p.val("distância {d:.2}   fov {d:.0} graus", .{ pj.dist, pj.fov });
-        p.titulo("Controles");
-        p.ctl("arrastar   gira o cubo");
-        p.ctl("p  perspectiva / ortográfica");
-        p.ctl("- / = ou rodinha  distância da câmera");
-        p.ctl("[ ]  ângulo de visão (fov)");
-        p.ctl("a  gira sozinho   0  volta ao início");
+        p.v2("distância {d:.2}   fov {d:.0} graus", "distance {d:.2}   fov {d:.0} degrees", .{ pj.dist, pj.fov });
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("arrastar   gira o cubo", "drag   rotate the cube"));
+        p.ctl(T("p  perspectiva / ortográfica", "p  perspective / orthographic"));
+        p.ctl(T("- / = ou rodinha  distância da câmera", "- / = or wheel  camera distance"));
+        p.ctl(T("[ ]  ângulo de visão (fov)", "[ ]  field of view (fov)"));
+        p.ctl(T("a  gira sozinho   0  volta ao início", "a  auto-rotate   0  reset"));
     }
 };
 
@@ -1396,7 +1441,7 @@ const Liso = struct {
 
 const Ocultas = struct {
     const Modo = enum { nenhuma, faces_de_tras, pintor, z_buffer };
-    const nomes = [_][]const u8{ "sem remoção (ordem da lista)", "descarte de faces de trás", "algoritmo do pintor", "z-buffer" };
+    const nomes = [_][2][]const u8{ .{ "sem remoção (ordem da lista)", "no removal (list order)" }, .{ "descarte de faces de trás", "back-face culling" }, .{ "algoritmo do pintor", "painter's algorithm" }, .{ "z-buffer", "z-buffer" } };
     const TriCena = struct { v: [3]td.VTela, cor: Vec3, prof: f32, de_tras: bool };
 
     modo: Modo = .nenhuma,
@@ -1511,28 +1556,28 @@ const Ocultas = struct {
             }
         };
         const a = app.area();
-        app.textoF(a.x0 + 16, 16, cores.tinta, "modo: {s}", .{nomes[@intFromEnum(o.modo)]});
+        app.textoF2(a.x0 + 16, 16, cores.tinta, "modo: {s}", "mode: {s}", .{nomes[@intFromEnum(o.modo)][@intFromBool(ingles)]});
 
-        p.titulo("O que é");
-        p.txt("Num desenho 3D vários triângulos caem no mesmo pixel; só o mais perto deveria aparecer. Remoção de superfícies ocultas é o que decide isso.");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Num desenho 3D vários triângulos caem no mesmo pixel; só o mais perto deveria aparecer. Remoção de superfícies ocultas é o que decide isso.", "In a 3D scene many triangles land on the same pixel; only the nearest should show. Hidden surface removal decides that."));
         switch (o.modo) {
-            .nenhuma => p.txt("Sem remoção: os triângulos são pintados na ordem da lista e o último ganha. A placa verde aparece por cima de tudo, até do que está na frente dela."),
-            .faces_de_tras => p.txt("Descarte de faces de trás: num objeto fechado, triângulo virado para longe da câmera (horário na tela) nunca aparece. Corta metade do trabalho, mas não resolve um objeto na frente do outro."),
-            .pintor => p.txt("Algoritmo do pintor: ordena os triângulos do mais longe para o mais perto e pinta nessa ordem. Falha quando objetos se cruzam (a placa atravessa os cubos): não existe uma ordem certa."),
-            .z_buffer => p.txt("Z-buffer: cada pixel guarda a profundidade do que já foi pintado nele; um novo pixel só é pintado se estiver mais perto. Funciona em qualquer ordem e com objetos que se cruzam, ao custo de memória (um número por pixel)."),
+            .nenhuma => p.txt(T("Sem remoção: os triângulos são pintados na ordem da lista e o último ganha. A placa verde aparece por cima de tudo, até do que está na frente dela.", "No removal: triangles are painted in list order and the last one wins. The green slab shows on top of everything, even what is in front of it.")),
+            .faces_de_tras => p.txt(T("Descarte de faces de trás: num objeto fechado, triângulo virado para longe da câmera (horário na tela) nunca aparece. Corta metade do trabalho, mas não resolve um objeto na frente do outro.", "Back-face culling: on a closed object, a triangle facing away from the camera (clockwise on screen) is never visible. It cuts half the work, but does not solve one object in front of another.")),
+            .pintor => p.txt(T("Algoritmo do pintor: ordena os triângulos do mais longe para o mais perto e pinta nessa ordem. Falha quando objetos se cruzam (a placa atravessa os cubos): não existe uma ordem certa.", "Painter's algorithm: sorts triangles from farthest to nearest and paints in that order. It fails when objects intersect (the slab cuts through the cubes): no correct order exists.")),
+            .z_buffer => p.txt(T("Z-buffer: cada pixel guarda a profundidade do que já foi pintado nele; um novo pixel só é pintado se estiver mais perto. Funciona em qualquer ordem e com objetos que se cruzam, ao custo de memória (um número por pixel).", "Z-buffer: each pixel stores the depth of what was already painted there; a new pixel is only painted if it is nearer. Works in any order and with intersecting objects, at the cost of memory (one number per pixel).")),
         }
-        p.titulo("Ao vivo");
-        p.val("triângulos: {d}  desenhados: {d}", .{ n, desenhados });
-        p.val("descartados (de trás): {d}", .{descartados});
-        p.val("pixels pintados: {d}", .{r.escritas});
-        p.val("pixels visíveis: {d}", .{cobertos});
-        if (cobertos > 0) p.val("sobreposição: {d:.2} pinturas/pixel", .{fl(@intCast(r.escritas)) / fl(@intCast(cobertos))});
-        if (o.modo == .z_buffer) p.val("recusados pelo teste de z: {d}", .{r.recusados});
-        p.titulo("Controles");
-        p.ctl("m  troca o método (4 modos)");
-        p.ctl("arrastar   gira a cena");
-        p.ctl("z  mostra o z-buffer (claro = longe)");
-        p.ctl("w  mostra as arestas dos triângulos");
+        p.titulo(T("Ao vivo", "Live"));
+        p.v2("triângulos: {d}  desenhados: {d}", "triangles: {d}  drawn: {d}", .{ n, desenhados });
+        p.v2("descartados (de trás): {d}", "culled (back faces): {d}", .{descartados});
+        p.v2("pixels pintados: {d}", "pixels painted: {d}", .{r.escritas});
+        p.v2("pixels visíveis: {d}", "pixels visible: {d}", .{cobertos});
+        if (cobertos > 0) p.v2("sobreposição: {d:.2} pinturas/pixel", "overdraw: {d:.2} paints/pixel", .{fl(@intCast(r.escritas)) / fl(@intCast(cobertos))});
+        if (o.modo == .z_buffer) p.v2("recusados pelo teste de z: {d}", "rejected by depth test: {d}", .{r.recusados});
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("m  troca o método (4 modos)", "m  switch method (4 modes)"));
+        p.ctl(T("arrastar   gira a cena", "drag   rotate the scene"));
+        p.ctl(T("z  mostra o z-buffer (claro = longe)", "z  show the z-buffer (light = far)"));
+        p.ctl(T("w  mostra as arestas dos triângulos", "w  show triangle edges"));
     }
 };
 
@@ -1660,40 +1705,40 @@ const Iluminacao = struct {
         app.tracejada(c.cx, c.cy, sx, sy, cores.laranja);
         app.circulo(sx, sy, 10, opaco | 0xfacc15);
         const a = app.area();
-        app.textoF(a.x0 + 16, 16, cores.tinta, "sombreamento: {s}", .{@tagName(il.modo)});
+        app.textoF2(a.x0 + 16, 16, cores.tinta, "sombreamento: {s}", "shading: {s}", .{@tagName(il.modo)});
 
-        p.titulo("O que é");
-        p.txt("Modelo de iluminação de Phong: I = ka + kd·max(N·L, 0) + ks·max(R·V, 0)^n. Ambiente (luz espalhada), difusa (Lambert: depende do ângulo entre a normal N e a luz L) e especular (o brilho, onde a luz refletida R aponta para o olho V).");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Modelo de iluminação de Phong: I = ka + kd·max(N·L, 0) + ks·max(R·V, 0)^n. Ambiente (luz espalhada), difusa (Lambert: depende do ângulo entre a normal N e a luz L) e especular (o brilho, onde a luz refletida R aponta para o olho V).", "Phong illumination model: I = ka + kd·max(N·L, 0) + ks·max(R·V, 0)^n. Ambient (scattered light), diffuse (Lambert: depends on the angle between the normal N and the light L) and specular (the highlight, where the reflected light R points at the eye V)."));
         switch (il.modo) {
-            .flat => p.txt("Flat: uma conta por triângulo, com a normal da face. Rápido, mas as facetas aparecem."),
-            .gouraud => p.txt("Gouraud: a conta é feita nos vértices (com a normal de cada vértice) e a COR é interpolada dentro do triângulo. Liso, mas o brilho fica borrado ou some com poucos triângulos."),
-            .phong => p.txt("Phong: a NORMAL é interpolada e a conta é feita em cada pixel. O brilho fica certo mesmo com poucos triângulos, ao custo de uma conta por pixel."),
+            .flat => p.txt(T("Flat: uma conta por triângulo, com a normal da face. Rápido, mas as facetas aparecem.", "Flat: one computation per triangle, using the face normal. Fast, but the facets show.")),
+            .gouraud => p.txt(T("Gouraud: a conta é feita nos vértices (com a normal de cada vértice) e a COR é interpolada dentro do triângulo. Liso, mas o brilho fica borrado ou some com poucos triângulos.", "Gouraud: lighting is computed at the vertices (with each vertex normal) and the COLOR is interpolated across the triangle. Smooth, but the highlight blurs or vanishes with few triangles.")),
+            .phong => p.txt(T("Phong: a NORMAL é interpolada e a conta é feita em cada pixel. O brilho fica certo mesmo com poucos triângulos, ao custo de uma conta por pixel.", "Phong: the NORMAL is interpolated and lighting is computed at every pixel. The highlight is right even with few triangles, at the cost of one computation per pixel.")),
         }
-        p.titulo("Ao vivo");
+        p.titulo(T("Ao vivo", "Live"));
         p.val("ka = {d:.2}  kd = {d:.2}  ks = {d:.2}  n = {d:.0}", .{ il.ka, il.kd, il.ks, il.brilho });
         p.val("L = ({d:.2}, {d:.2}, {d:.2})  V = (0, 0, 1)", .{ l.x, l.y, l.z });
-        p.val("esfera: {d} triângulos ({d} visíveis)", .{ malha.tris.len, desenhados });
+        p.v2("esfera: {d} triângulos ({d} visíveis)", "sphere: {d} triangles ({d} visible)", .{ malha.tris.len, desenhados });
         if (il.sonda.ok) {
             if (il.modo == .phong) {
                 const n = il.sonda.a.normalizado();
                 const nl = n.escalar(l);
                 const rr = n.vezes(2 * nl).menos(l);
-                p.val("no mouse: N = ({d:.2}, {d:.2}, {d:.2})", .{ n.x, n.y, n.z });
+                p.v2("no mouse: N = ({d:.2}, {d:.2}, {d:.2})", "at mouse: N = ({d:.2}, {d:.2}, {d:.2})", .{ n.x, n.y, n.z });
                 p.val("  N·L = {d:.3}   R·V = {d:.3}", .{ nl, rr.z });
                 p.val("  I = {d:.2} + {d:.2}·{d:.2} + {d:.2}·{d:.3}", .{ il.ka, il.kd, @max(nl, 0), il.ks, if (nl > 0) std.math.pow(f32, @max(rr.z, 0), il.brilho) else 0 });
             } else {
-                p.val("no mouse: cor interpolada", .{});
+                p.v2("no mouse: cor interpolada", "at mouse: interpolated color", .{});
                 p.val("  RGB = ({d:.2}, {d:.2}, {d:.2})", .{ il.sonda.a.x, il.sonda.a.y, il.sonda.a.z });
             }
-        } else p.val("(passe o mouse na esfera)", .{});
-        p.titulo("Controles");
+        } else p.v2("(passe o mouse na esfera)", "(hover the sphere)", .{});
+        p.titulo(T("Controles", "Controls"));
         p.ctl("m  flat / Gouraud / Phong");
-        p.ctl("arrastar (esq.)  move a luz");
-        p.ctl("arrastar (dir.)  gira a esfera");
-        p.ctl("- / =  menos/mais triângulos");
-        p.ctl("a A  ambiente   d D  difusa");
-        p.ctl("s S  especular  n N  brilho");
-        p.ctl("w  mostra as arestas");
+        p.ctl(T("arrastar (esq.)  move a luz", "drag (left)   move the light"));
+        p.ctl(T("arrastar (dir.)  gira a esfera", "drag (right)  rotate the sphere"));
+        p.ctl(T("- / =  menos/mais triângulos", "- / =  fewer/more triangles"));
+        p.ctl(T("a A  ambiente   d D  difusa", "a A  ambient   d D  diffuse"));
+        p.ctl(T("s S  especular  n N  brilho", "s S  specular  n N  shininess"));
+        p.ctl(T("w  mostra as arestas", "w  show edges"));
     }
 };
 
@@ -1814,11 +1859,11 @@ const Animacao = struct {
         const ciclo = @mod(t / 2, 2);
         const u = if (ciclo < 1) ciclo else 2 - ciclo;
         const curvas = [_]struct { n: []const u8, f: *const fn (f32) f32, c: Cor }{
-            .{ .n = "linear", .f = &linear, .c = cores.tinta },
-            .{ .n = "suave", .f = &suave, .c = cores.roxo },
-            .{ .n = "quique", .f = &quique, .c = cores.laranja },
+            .{ .n = T("linear", "linear"), .f = &linear, .c = cores.tinta },
+            .{ .n = T("suave", "ease"), .f = &suave, .c = cores.roxo },
+            .{ .n = T("quique", "bounce"), .f = &quique, .c = cores.laranja },
         };
-        app.texto(a.x0 + 16, paraInt(fy) + 10, "interpolação entre dois quadros-chave (A e B)", cores.cinza);
+        app.texto(a.x0 + 16, paraInt(fy) + 10, T("interpolação entre dois quadros-chave (A e B)", "interpolation between two keyframes (A and B)"), cores.cinza);
         for (curvas, 0..) |c, k| {
             const y = fy + 50 + fl(@intCast(k)) * 40;
             app.texto(a.x0 + 16, paraInt(y) - 8, c.n, c.c);
@@ -1840,21 +1885,21 @@ const Animacao = struct {
             app.circulo(gx + u * gw * 3, gy - c.f(u) * gh, 3, cores.vermelho);
         }
 
-        p.titulo("O que é");
-        p.txt("Animar é redesenhar a cena muitas vezes por segundo, mudando um pouco a cada quadro em função do tempo t.");
-        p.txt("Grafo de cena: a Lua é desenhada no sistema de coordenadas da Terra, que está no do Sol. A matriz de cada corpo é a do pai vezes a sua: basta girar o pai e os filhos vão junto. As setas mostram os eixos x (vermelho) e y (verde) de cada sistema.");
-        p.txt("Embaixo: entre dois quadros-chave a posição é interpolada. A curva de tempo muda o movimento (constante, acelerando e freando, quicando).");
-        p.titulo("Ao vivo");
-        p.val("t = {d:.2} s   velocidade {d:.3}x", .{ t, an.vel });
-        p.val("M_terra = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)", .{ @mod(t * w_terra * 180 / std.math.pi, 360), raio_terra, @mod(t * w_giro * 180 / std.math.pi, 360) });
-        p.val("M_lua   = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)·T(52, 0)", .{ @mod(t * w_terra * 180 / std.math.pi, 360), raio_terra, @mod(t * w_lua * 180 / std.math.pi, 360) });
-        p.mat3("Lua", m_lua);
-        p.val("u = {d:.2}: linear {d:.2}  suave {d:.2}  quique {d:.2}", .{ u, u, suave(u), quique(u) });
-        p.val("último quadro: {d:.1} ms ({d:.0} quadros/s possíveis)", .{ app.quadro_ms, 1000 / @max(app.quadro_ms, 0.1) });
-        p.titulo("Controles");
-        p.ctl("espaço  pausa   setas  avança/volta");
-        p.ctl("- / =   mais devagar / mais rápido");
-        p.ctl("h  eixos   r  rastro   0  reinicia");
+        p.titulo(T("O que é", "What it is"));
+        p.txt(T("Animar é redesenhar a cena muitas vezes por segundo, mudando um pouco a cada quadro em função do tempo t.", "Animating means redrawing the scene many times per second, changing it a little each frame as a function of time t."));
+        p.txt(T("Grafo de cena: a Lua é desenhada no sistema de coordenadas da Terra, que está no do Sol. A matriz de cada corpo é a do pai vezes a sua: basta girar o pai e os filhos vão junto. As setas mostram os eixos x (vermelho) e y (verde) de cada sistema.", "Scene graph: the Moon is drawn in the Earth's coordinate system, which lives in the Sun's. Each body's matrix is its parent's times its own: rotate the parent and the children follow. The arrows show the x (red) and y (green) axes of each system."));
+        p.txt(T("Embaixo: entre dois quadros-chave a posição é interpolada. A curva de tempo muda o movimento (constante, acelerando e freando, quicando).", "Below: between two keyframes the position is interpolated. The timing curve changes the motion (constant, speeding up and slowing down, bouncing)."));
+        p.titulo(T("Ao vivo", "Live"));
+        p.v2("t = {d:.2} s   velocidade {d:.3}x", "t = {d:.2} s   speed {d:.3}x", .{ t, an.vel });
+        p.v2("M_terra = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)", "M_earth = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)", .{ @mod(t * w_terra * 180 / std.math.pi, 360), raio_terra, @mod(t * w_giro * 180 / std.math.pi, 360) });
+        p.v2("M_lua   = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)·T(52, 0)", "M_moon  = T(c)·R({d:.0}°)·T({d:.0}, 0)·R({d:.0}°)·T(52, 0)", .{ @mod(t * w_terra * 180 / std.math.pi, 360), raio_terra, @mod(t * w_lua * 180 / std.math.pi, 360) });
+        p.mat3(T("Lua", "Moon"), m_lua);
+        p.v2("u = {d:.2}: linear {d:.2}  suave {d:.2}  quique {d:.2}", "u = {d:.2}: linear {d:.2}  ease {d:.2}  bounce {d:.2}", .{ u, u, suave(u), quique(u) });
+        p.v2("último quadro: {d:.1} ms ({d:.0} quadros/s possíveis)", "last frame: {d:.1} ms ({d:.0} frames/s possible)", .{ app.quadro_ms, 1000 / @max(app.quadro_ms, 0.1) });
+        p.titulo(T("Controles", "Controls"));
+        p.ctl(T("espaço  pausa   setas  avança/volta", "space  pause   arrows  step fwd/back"));
+        p.ctl(T("- / =   mais devagar / mais rápido", "- / =   slower / faster"));
+        p.ctl(T("h  eixos   r  rastro   0  reinicia", "h  axes   r  trail   0  restart"));
     }
 };
 
@@ -1865,7 +1910,7 @@ fn linear(u: f32) f32 {
 // ===========================================================================
 
 pub fn main(init: std.process.Init) !void {
-    var janela = try x11.Janela.abrir(init.gpa, init.environ_map, "CG Interativa", 1400, 860);
+    var janela = try x11.Janela.abrir(init.gpa, init.environ_map, T("CG Interativa", "CG Interativa"), 1400, 860);
     defer janela.fechar();
     var app: App = .{
         .gpa = init.gpa,
@@ -1874,8 +1919,14 @@ pub fn main(init: std.process.Init) !void {
     };
     defer app.tela.destruir();
     defer init.gpa.free(app.zbuf);
+    const lang = init.environ_map.get("CG_LANG") orelse init.environ_map.get("LANG") orelse "pt";
+    ingles = !std.mem.startsWith(u8, lang, "pt");
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len > 1) {
+    for (args[1..]) |a| {
+        if (std.mem.eql(u8, a, "--en") or std.mem.eql(u8, a, "--english")) ingles = true;
+        if (std.mem.eql(u8, a, "--pt") or std.mem.eql(u8, a, "--portugues")) ingles = false;
+    }
+    if (args.len > 1 and args[1][0] != '-') {
         const n = std.fmt.parseInt(usize, args[1], 10) catch 1;
         app.irPara(n -| 1);
     }
