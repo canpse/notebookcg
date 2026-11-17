@@ -15,18 +15,39 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .strip = optimize != .Debug,
     }) });
+    if (target.result.os.tag == .windows) {
+        // Win32: a janela usa user32 e gdi32 (do próprio Windows); o ícone vai
+        // dentro do .exe e não abre console junto.
+        aulas.root_module.linkSystemLibrary("user32", .{});
+        aulas.root_module.linkSystemLibrary("gdi32", .{});
+        aulas.root_module.addWin32ResourceFile(.{ .file = b.path("assets/cg-interativa.rc") });
+        aulas.subsystem = .windows;
+    }
     b.installArtifact(aulas);
 
-    // Atalho no menu de aplicativos e ícone (padrão freedesktop), com o
-    // caminho do binário de onde for instalado: `zig build --prefix ~/.local`.
-    const atalho = std.mem.replaceOwned(u8, b.allocator, @embedFile("assets/cg-interativa.desktop.in"), "@BIN@", b.getInstallPath(.bin, "cg-interativa")) catch @panic("sem memória");
-    const gerados = b.addWriteFiles();
-    const desktop = gerados.add("cg-interativa.desktop", atalho);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(desktop, .{ .custom = "share/applications" }, "cg-interativa.desktop").step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/cg-interativa.png"), .{ .custom = "share/icons/hicolor/256x256/apps" }, "cg-interativa.png").step);
+    if (target.result.os.tag != .windows) instalarAtalho(b);
     const rodar = b.addRunArtifact(aulas);
     if (b.args) |args| rodar.addArgs(args);
     b.step("run", "Abre a CG Interativa (zig build run -- N abre na aula N)").dependOn(&rodar.step);
+
+    const testes = b.step("test", "Roda os testes (no Windows por Wine: zig build test -Dtarget=x86_64-windows -fwine)");
+    const windows = target.result.os.tag == .windows;
+    for ([_][]const u8{ "src/aulas.zig", "src/main.zig" }) |raiz| {
+        // O quadro antigo (main.zig) é só X11.
+        if (windows and std.mem.eql(u8, raiz, "src/main.zig")) continue;
+        const t = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path(raiz),
+            .target = target,
+            .optimize = .Debug,
+        }) });
+        if (windows) {
+            t.root_module.linkSystemLibrary("user32", .{});
+            t.root_module.linkSystemLibrary("gdi32", .{});
+        }
+        testes.dependOn(&b.addRunArtifact(t).step);
+    }
+
+    if (windows) return;
 
     // O quadro de desenho que veio antes (mesma base: janela, tela, matrizes).
     const editor = b.addExecutable(.{ .name = "editor", .root_module = b.createModule(.{
@@ -38,13 +59,14 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| rodar_editor.addArgs(args);
     b.step("editor", "Abre o quadro de desenho antigo").dependOn(&rodar_editor.step);
 
-    const testes = b.step("test", "Roda os testes");
-    for ([_][]const u8{ "src/aulas.zig", "src/main.zig" }) |raiz| {
-        const t = b.addTest(.{ .root_module = b.createModule(.{
-            .root_source_file = b.path(raiz),
-            .target = target,
-            .optimize = .Debug,
-        }) });
-        testes.dependOn(&b.addRunArtifact(t).step);
-    }
+}
+
+/// Atalho no menu de aplicativos e ícone (padrão freedesktop), com o caminho
+/// do binário de onde for instalado: `zig build --prefix ~/.local`.
+fn instalarAtalho(b: *std.Build) void {
+    const atalho = std.mem.replaceOwned(u8, b.allocator, @embedFile("assets/cg-interativa.desktop.in"), "@BIN@", b.getInstallPath(.bin, "cg-interativa")) catch @panic("sem memória");
+    const gerados = b.addWriteFiles();
+    const desktop = gerados.add("cg-interativa.desktop", atalho);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(desktop, .{ .custom = "share/applications" }, "cg-interativa.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/cg-interativa.png"), .{ .custom = "share/icons/hicolor/256x256/apps" }, "cg-interativa.png").step);
 }

@@ -13,7 +13,8 @@ teclado, e o painel da direita mostra, ao vivo, os números por trás da imagem
 Interface em português e inglês (`F2` ou o botão PT/EN).
 
 Tudo feito do zero em [Zig](https://ziglang.org), **sem biblioteca gráfica**:
-a janela fala o protocolo do X11 pelo socket, cada pixel é escrito num vetor
+no Linux a janela fala o protocolo do X11 pelo socket, no Windows usa a API
+Win32 direto (só o `user32` e o `gdi32` do sistema); cada pixel é escrito num vetor
 na memória e o 3D tem rasterizador de triângulos com z-buffer próprio. O
 programa é, ele mesmo, um exemplo do que ensina.
 
@@ -31,16 +32,24 @@ programa é, ele mesmo, um exemplo do que ensina.
 
 ### Instalar
 
-Precisa de Linux com X11 (no Wayland, o XWayland serve; é o padrão no GNOME e no KDE).
+Roda no **Windows** (10/11, 64 bits) e no **Linux** (X11; no Wayland, o
+XWayland serve, que é o padrão no GNOME e no KDE).
 
-**Pacote pronto** (sem compilar): baixe o `.tar.gz` da sua arquitetura em
+**Windows**: baixe `cg-interativa-1.0.0-x86_64-windows.zip` em
+[Releases](../../releases) e extraia. O `cg-interativa.exe` já abre com dois
+cliques, sem instalar nada. Pra instalar (atalho no Menu Iniciar, sem pedir
+administrador), dê dois cliques em `instalar.bat`; pra remover, rode
+`instalar.bat /remover`. Como o programa não é assinado, o Windows pode
+mostrar o aviso do SmartScreen: "Mais informações" → "Executar assim mesmo".
+
+**Linux, pacote pronto** (sem compilar): baixe o `.tar.gz` da sua arquitetura em
 [Releases](../../releases), extraia e rode o instalador:
 
     tar xzf cg-interativa-1.0.0-x86_64-linux.tar.gz
     cd cg-interativa-1.0.0-x86_64-linux
     ./instalar.sh            # instala em ~/.local, sem sudo
 
-**Do código** (precisa do [Zig 0.16](https://ziglang.org/download/)):
+**Linux, do código** (precisa do [Zig 0.16](https://ziglang.org/download/)):
 
     git clone https://github.com/canpse/notebookcg && cd notebookcg
     ./instalar.sh            # ou: zig build -Doptimize=ReleaseFast --prefix ~/.local
@@ -54,10 +63,12 @@ escolhem o idioma). Pra instalar pra todos os usuários:
 
     zig build run -- 5       # compila e abre na aula 5
     zig build test           # testes
-    ferramentas/empacotar.sh 1.0.0   # pacotes do release em dist/
+    zig build -Dtarget=x86_64-windows            # .exe do Windows (de qualquer sistema)
+    zig build test -Dtarget=x86_64-windows -fwine  # testes do Windows pelo Wine
+    ferramentas/empacotar.sh 1.0.0   # pacotes do release (Linux e Windows) em dist/
 
 As aulas estão em `src/aulas.zig`; o 3D (Mat4, malhas, rasterizador) em
-`src/tres_d.zig`; a janela em `src/x11.zig`; o framebuffer e as primitivas em
+`src/tres_d.zig`; a janela em `src/janela.zig` (escolhe `src/x11.zig` ou `src/win32.zig`); o framebuffer e as primitivas em
 `src/tela.zig`; a matriz 3×3 em `src/mat3.zig`. Pra gerar prints sem mexer no
 mouse: `CG_PRINT=saida.ppm CG_MOUSE=x,y CG_TECLAS=mm CG_LANG=en zig-out/bin/cg-interativa N`.
 
@@ -68,10 +79,11 @@ topic of a typical CG course. In each lesson you manipulate the scene with
 the mouse and keyboard while the side panel shows, live, the numbers behind
 the image (matrices, region codes, depth, the lighting equation).
 The interface is in Portuguese and English (press `F2` or click PT/EN; it
-starts in the language of `$LANG`).
+starts in the language of `$LANG`, or of Windows).
 
 Written from scratch in [Zig](https://ziglang.org) with **no graphics
-library**: the window speaks the X11 protocol over its socket, every pixel is
+library**: on Linux the window speaks the X11 protocol over its socket, on
+Windows it uses the Win32 API directly (just the system's user32 and gdi32), every pixel is
 written to an array in memory, and the 3D part has its own triangle
 rasterizer with a z-buffer.
 
@@ -84,9 +96,16 @@ painter's, z-buffer) · Phong lighting (flat, Gouraud, Phong) · animation
 
 ### Install
 
-Requires Linux with X11 (XWayland works on Wayland desktops).
+Runs on **Windows** (10/11, 64-bit) and **Linux** (X11; XWayland works on
+Wayland desktops).
 
-**Prebuilt package**: download the `.tar.gz` for your architecture from
+**Windows**: download `cg-interativa-1.0.0-x86_64-windows.zip` from
+[Releases](../../releases) and extract it. `cg-interativa.exe` runs with a
+double click, no install needed. To install it (Start menu shortcut, no admin
+rights), double-click `instalar.bat`; remove it with `instalar.bat /uninstall`.
+The program is not signed, so SmartScreen may warn: "More info" → "Run anyway".
+
+**Linux**: prebuilt package: download the `.tar.gz` for your architecture from
 [Releases](../../releases), extract it and run `./instalar.sh` (installs to
 `~/.local`, no sudo). **From source** (needs [Zig 0.16](https://ziglang.org/download/)):
 clone and run `./instalar.sh`, or `zig build -Doptimize=ReleaseFast --prefix ~/.local`.

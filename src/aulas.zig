@@ -7,8 +7,7 @@
 //! pixel é pintado num vetor na memória (`tela.zig`), as transformações são
 //! matrizes em coordenadas homogêneas (`mat3.zig`, `tres_d.zig`).
 const std = @import("std");
-const linux = std.os.linux;
-const x11 = @import("x11.zig");
+const x11 = @import("janela.zig");
 const tela_ = @import("tela.zig");
 const Tela = tela_.Tela;
 const Cor = tela_.Cor;
@@ -230,8 +229,7 @@ pub const App = struct {
     }
 
     fn pintar(app: *App) !void {
-        var ini: linux.timespec = undefined;
-        _ = linux.clock_gettime(.MONOTONIC, &ini);
+        const ini = x11.agora();
 
         const a = app.area();
         const n: usize = @intCast((a.x1 - a.x0) * (a.y1 - a.y0));
@@ -247,9 +245,7 @@ pub const App = struct {
         app.pintarPainel(&p);
         try app.janela.mostrar(app.tela.pixels, app.tela.largura, app.tela.altura);
 
-        var fim: linux.timespec = undefined;
-        _ = linux.clock_gettime(.MONOTONIC, &fim);
-        app.quadro_ms = @as(f32, @floatFromInt(fim.sec - ini.sec)) * 1000 + @as(f32, @floatFromInt(fim.nsec - ini.nsec)) / 1e6;
+        app.quadro_ms = @floatCast((x11.agora() - ini) * 1000);
     }
 
     fn pintarLateral(app: *App) void {
@@ -1919,8 +1915,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer app.tela.destruir();
     defer init.gpa.free(app.zbuf);
-    const lang = init.environ_map.get("CG_LANG") orelse init.environ_map.get("LANG") orelse "pt";
-    ingles = !std.mem.startsWith(u8, lang, "pt");
+    ingles = !x11.sistemaEmPortugues(init.environ_map.get("CG_LANG") orelse init.environ_map.get("LANG"));
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     for (args[1..]) |a| {
         if (std.mem.eql(u8, a, "--en") or std.mem.eql(u8, a, "--english")) ingles = true;
@@ -1961,8 +1956,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var antes: linux.timespec = undefined;
-    _ = linux.clock_gettime(.MONOTONIC, &antes);
+    var antes = x11.agora();
     var mudou = true;
     laco: while (true) {
         const anim = app.animando();
@@ -1985,9 +1979,8 @@ pub fn main(init: std.process.Init) !void {
                 .movimento => |m| app.moveu(m.x, m.y),
             }
         }
-        var agora: linux.timespec = undefined;
-        _ = linux.clock_gettime(.MONOTONIC, &agora);
-        const dt = @as(f32, @floatFromInt(agora.sec - antes.sec)) + @as(f32, @floatFromInt(agora.nsec - antes.nsec)) / 1e9;
+        const agora = x11.agora();
+        const dt: f32 = @floatCast(agora - antes);
         antes = agora;
         if (app.animando()) {
             app.passo(@min(dt, 0.1));
@@ -2001,6 +1994,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test {
+    if (@import("builtin").os.tag == .windows) _ = @import("win32.zig");
     _ = @import("tres_d.zig");
     _ = @import("tela.zig");
     _ = @import("mat3.zig");
