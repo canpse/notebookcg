@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=CG Interativa
+Name[pt_BR]=CG Interativa
+GenericName=Computer Graphics lessons
+GenericName[pt_BR]=Aulas de Computação Gráfica
+Comment=Interactive computer graphics lessons: rasterization, transforms, clipping, projection, z-buffer, shading
+Comment[pt_BR]=Aulas interativas de computação gráfica: rasterização, transformações, recorte, projeção, z-buffer, iluminação
+Exec=@BIN@
+Icon=cg-interativa
+Terminal=false
+Categories=Education;Graphics;Science;
+Keywords=graphics;opengl;rasterization;bresenham;zbuffer;phong;computação;gráfica;

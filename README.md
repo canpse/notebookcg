@@ -1,36 +1,112 @@
 # CG Interativa
 
-Software educacional de Computação Gráfica: **9 aulas interativas**, uma
-por tópico da ementa (IFC, 2026.2). Em cada aula você mexe na cena com o
-mouse e o teclado, e o painel da direita mostra, ao vivo, os números por
-trás da imagem (matrizes, códigos de região, profundidade, a conta da luz).
+![CG Interativa](docs/prints/aulas/a3.png)
 
-    zig build run          # abre na aula 1
-    zig build run -- 7     # abre direto na aula 7
-    zig build test         # testes
+**[Português](#português) · [English](#english)**
 
-| | Aula | Mostra |
+## Português
+
+Software educacional de Computação Gráfica: **9 aulas interativas**, uma por
+tópico da ementa da disciplina. Em cada aula você mexe na cena com o mouse e o
+teclado, e o painel da direita mostra, ao vivo, os números por trás da imagem
+(matrizes, códigos de região, profundidade, a conta da iluminação).
+Interface em português e inglês (`F2` ou o botão PT/EN).
+
+Tudo feito do zero em [Zig](https://ziglang.org), **sem biblioteca gráfica**:
+a janela fala o protocolo do X11 pelo socket, cada pixel é escrito num vetor
+na memória e o 3D tem rasterizador de triângulos com z-buffer próprio. O
+programa é, ele mesmo, um exemplo do que ensina.
+
+| | Aula | O que mostra |
 |---|---|---|
 | 1 | Framebuffer e pixels | matriz de pixels, índice y·largura+x, RGB, tamanho real |
 | 2 | Rasterização de retas | DDA, Bresenham (tabela do erro), antialiasing |
 | 3 | Transformações 2D | S, R, T e M = T·R·S ao vivo; ordem; giro no centro |
-| 4 | Janela -> viewport | mundo x tela, sx/sy, distorção |
+| 4 | Janela → viewport | mundo × tela, sx/sy, distorção |
 | 5 | Recorte de retas | Cohen-Sutherland com códigos de 4 bits e passos |
-| 6 | Projeção 3D | pipeline de um vértice (mundo, câmera, clip, /w, tela), perspectiva x ortográfica, vista de cima |
+| 6 | Projeção 3D | pipeline de um vértice (mundo, câmera, clip, ÷w, tela), perspectiva × ortográfica, vista de cima |
 | 7 | Superfícies ocultas | sem remoção, faces de trás, pintor, z-buffer (e ver o z-buffer) |
-| 8 | Iluminação e shading | Phong: flat, Gouraud, Phong; a conta no pixel do mouse |
+| 8 | Iluminação e shading | modelo de Phong: flat, Gouraud, Phong; a conta no pixel do mouse |
 | 9 | Animação | grafo de cena Sol-Terra-Lua, quadros-chave e curvas de tempo |
 
-Tudo sem biblioteca gráfica: a janela fala o protocolo do X11 pelo socket,
-cada pixel é escrito num vetor na memória e o 3D tem rasterizador de
-triângulos com z-buffer próprio (`src/tres_d.zig`). Aulas em `src/aulas.zig`.
-Prints em `docs/prints/aulas/`. Pra gerar prints sem mexer no mouse:
-`CG_PRINT=saida.ppm CG_MOUSE=x,y CG_TECLAS=mm zig-out/bin/cg-interativa N`.
+### Instalar
 
-O quadro de desenho que veio antes (mesma base) continua: `zig build editor`.
-O resto deste arquivo é sobre ele.
+Precisa de Linux com X11 (no Wayland, o XWayland serve; é o padrão no GNOME e no KDE).
+
+**Pacote pronto** (sem compilar): baixe o `.tar.gz` da sua arquitetura em
+[Releases](../../releases), extraia e rode o instalador:
+
+    tar xzf cg-interativa-1.0.0-x86_64-linux.tar.gz
+    cd cg-interativa-1.0.0-x86_64-linux
+    ./instalar.sh            # instala em ~/.local, sem sudo
+
+**Do código** (precisa do [Zig 0.16](https://ziglang.org/download/)):
+
+    git clone https://github.com/canpse/notebookcg && cd notebookcg
+    ./instalar.sh            # ou: zig build -Doptimize=ReleaseFast --prefix ~/.local
+
+Depois é só abrir **CG Interativa** no menu de aplicativos, ou rodar
+`cg-interativa` (`cg-interativa 7` abre direto na aula 7; `--en`/`--pt`
+escolhem o idioma). Pra instalar pra todos os usuários:
+`sudo PREFIX=/usr/local ./instalar.sh`. Pra remover: `./instalar.sh --remover`.
+
+### Desenvolver
+
+    zig build run -- 5       # compila e abre na aula 5
+    zig build test           # testes
+    ferramentas/empacotar.sh 1.0.0   # pacotes do release em dist/
+
+As aulas estão em `src/aulas.zig`; o 3D (Mat4, malhas, rasterizador) em
+`src/tres_d.zig`; a janela em `src/x11.zig`; o framebuffer e as primitivas em
+`src/tela.zig`; a matriz 3×3 em `src/mat3.zig`. Pra gerar prints sem mexer no
+mouse: `CG_PRINT=saida.ppm CG_MOUSE=x,y CG_TECLAS=mm CG_LANG=en zig-out/bin/cg-interativa N`.
+
+## English
+
+Educational computer graphics software: **9 interactive lessons**, one per
+topic of a typical CG course. In each lesson you manipulate the scene with
+the mouse and keyboard while the side panel shows, live, the numbers behind
+the image (matrices, region codes, depth, the lighting equation).
+The interface is in Portuguese and English (press `F2` or click PT/EN; it
+starts in the language of `$LANG`).
+
+Written from scratch in [Zig](https://ziglang.org) with **no graphics
+library**: the window speaks the X11 protocol over its socket, every pixel is
+written to an array in memory, and the 3D part has its own triangle
+rasterizer with a z-buffer.
+
+Lessons: framebuffer and pixels · line rasterization (DDA, Bresenham,
+antialiasing) · 2D transforms with homogeneous matrices · window-to-viewport ·
+Cohen-Sutherland clipping · 3D projection (perspective/orthographic, with the
+full pipeline of one vertex) · hidden surfaces (none, back-face culling,
+painter's, z-buffer) · Phong lighting (flat, Gouraud, Phong) · animation
+(scene graph and easing curves).
+
+### Install
+
+Requires Linux with X11 (XWayland works on Wayland desktops).
+
+**Prebuilt package**: download the `.tar.gz` for your architecture from
+[Releases](../../releases), extract it and run `./instalar.sh` (installs to
+`~/.local`, no sudo). **From source** (needs [Zig 0.16](https://ziglang.org/download/)):
+clone and run `./instalar.sh`, or `zig build -Doptimize=ReleaseFast --prefix ~/.local`.
+Then open **CG Interativa** from your app menu or run `cg-interativa`
+(`cg-interativa 7 --en` opens lesson 7 in English). Remove with
+`./instalar.sh --uninstall`.
+
+## Licença / License
+
+GPL-3.0-or-later ([LICENSE](LICENSE)). A fonte bitmap vem da fonte de console
+`eurlatgr` do projeto kbd (GPL). / The bitmap font comes from the `eurlatgr`
+console font of the kbd project (GPL).
+
+Trabalho da disciplina de Computação Gráfica, Ciência da Computação, IFC
+Campus Rio do Sul, 2026. / Computer Graphics course project, IFC, Brazil, 2026.
 
 ---
+
+O repositório também tem o quadro de desenho que veio antes (mesma base):
+`zig build editor`. O resto deste arquivo é sobre ele.
 
 # Quadro de desenho (editor-cg)
 

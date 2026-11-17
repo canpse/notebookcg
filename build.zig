@@ -13,8 +13,17 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/aulas.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = optimize != .Debug,
     }) });
     b.installArtifact(aulas);
+
+    // Atalho no menu de aplicativos e ícone (padrão freedesktop), com o
+    // caminho do binário de onde for instalado: `zig build --prefix ~/.local`.
+    const atalho = std.mem.replaceOwned(u8, b.allocator, @embedFile("assets/cg-interativa.desktop.in"), "@BIN@", b.getInstallPath(.bin, "cg-interativa")) catch @panic("sem memória");
+    const gerados = b.addWriteFiles();
+    const desktop = gerados.add("cg-interativa.desktop", atalho);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(desktop, .{ .custom = "share/applications" }, "cg-interativa.desktop").step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(b.path("assets/cg-interativa.png"), .{ .custom = "share/icons/hicolor/256x256/apps" }, "cg-interativa.png").step);
     const rodar = b.addRunArtifact(aulas);
     if (b.args) |args| rodar.addArgs(args);
     b.step("run", "Abre a CG Interativa (zig build run -- N abre na aula N)").dependOn(&rodar.step);
